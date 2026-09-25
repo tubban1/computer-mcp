@@ -45,11 +45,13 @@ ALLOW_BROWSER=true
 BROWSER_HEADLESS=false
 ```
 
-The managed browser uses a separate persistent profile by default:
+By default, the managed browser uses an isolated runtime profile under:
 
 ```text
-~/.computer-mcp/browser-profile
+~/.computer-mcp/browser-profiles/runtime-<pid>
 ```
+
+Set `BROWSER_PROFILE_DIR` if you want a persistent login/profile across computer-mcp restarts.
 
 Web page content is treated as untrusted data. Browser click/type tools are marked destructive/open-world because they may trigger external side effects.
 
