@@ -777,6 +777,7 @@ function createServer() {
           delete: envFlag("ALLOW_DELETE", false),
           shell: envFlag("ALLOW_SHELL", false),
           gitPush: envFlag("ALLOW_GIT_PUSH", false),
+          rollback: envFlag("ALLOW_ROLLBACK", false),
           auditLogEnabled: envFlag("AUDIT_LOG_ENABLED", true),
           auditLogPath: getAuditLogPath(),
         });
