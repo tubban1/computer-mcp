@@ -152,3 +152,138 @@ export async function deletePath(inputPath: string, recursive = false) {
   await fs.rm(safePath, { recursive, force: false });
   return { path: safePath, deleted: true };
 }
+
+
+const MAX_MULTI_FILE_BYTES = 512 * 1024;
+
+export async function readMultipleFiles(paths: string[]) {
+  if (paths.length === 0) throw new Error("At least one path is required.");
+  if (paths.length > 50) throw new Error("read_multiple_files accepts at most 50 paths.");
+
+  return await Promise.all(
+    paths.map(async (inputPath) => {
+      try {
+        const safePath = await assertAllowedExistingPath(inputPath);
+        const stat = await fs.stat(safePath);
+        if (!stat.isFile()) throw new Error("Path is not a file.");
+        if (stat.size > MAX_MULTI_FILE_BYTES) {
+          throw new Error(`File is too large (max ${MAX_MULTI_FILE_BYTES} bytes).`);
+        }
+
+        return {
+          path: safePath,
+          ok: true as const,
+          content: await fs.readFile(safePath, "utf8"),
+        };
+      } catch (error) {
+        return {
+          path: inputPath,
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+  );
+}
+
+export async function listDirectoryTree(
+  inputPath: string,
+  depth = 2,
+  maxEntriesPerDirectory = 100,
+) {
+  const root = await assertAllowedExistingPath(inputPath);
+  const maxDepth = Math.min(Math.max(depth, 1), 8);
+  const perDirectory = Math.min(Math.max(maxEntriesPerDirectory, 1), 500);
+
+  type TreeNode = {
+    name: string;
+    path: string;
+    type: "directory" | "file" | "other";
+    children?: TreeNode[];
+    truncated?: number;
+  };
+
+  async function walk(dir: string, currentDepth: number): Promise<TreeNode[]> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const visible = entries.slice(0, perDirectory);
+    const nodes: TreeNode[] = [];
+
+    for (const entry of visible) {
+      if (entry.isSymbolicLink()) continue;
+      const fullPath = path.join(dir, entry.name);
+      const type: TreeNode["type"] = entry.isDirectory()
+        ? "directory"
+        : entry.isFile()
+          ? "file"
+          : "other";
+      const node: TreeNode = { name: entry.name, path: fullPath, type };
+
+      if (entry.isDirectory() && currentDepth < maxDepth) {
+        node.children = await walk(fullPath, currentDepth + 1);
+      }
+      nodes.push(node);
+    }
+
+    if (entries.length > visible.length) {
+      nodes.push({
+        name: "[truncated]",
+        path: dir,
+        type: "other",
+        truncated: entries.length - visible.length,
+      });
+    }
+
+    return nodes;
+  }
+
+  return {
+    root,
+    depth: maxDepth,
+    maxEntriesPerDirectory: perDirectory,
+    children: await walk(root, 1),
+  };
+}
+
+export async function batchEditFiles(
+  edits: Array<{
+    path: string;
+    oldText: string;
+    newText: string;
+    replaceAll?: boolean;
+  }>,
+) {
+  requireCapability("ALLOW_WRITE", true);
+  if (edits.length === 0) throw new Error("At least one edit is required.");
+  if (edits.length > 100) throw new Error("batch_edit_files accepts at most 100 edits.");
+
+  const prepared: Array<{
+    path: string;
+    updated: string;
+    replacements: number;
+  }> = [];
+
+  for (const edit of edits) {
+    if (!edit.oldText) throw new Error("old_text must not be empty.");
+    const safePath = await assertAllowedExistingPath(edit.path);
+    const original = await fs.readFile(safePath, "utf8");
+
+    if (!original.includes(edit.oldText)) {
+      throw new Error(`old_text was not found in ${safePath}; no files were changed.`);
+    }
+
+    const replacements = edit.replaceAll
+      ? original.split(edit.oldText).length - 1
+      : 1;
+    const updated = edit.replaceAll
+      ? original.split(edit.oldText).join(edit.newText)
+      : original.replace(edit.oldText, edit.newText);
+
+    prepared.push({ path: safePath, updated, replacements });
+  }
+
+  for (const item of prepared) {
+    await fs.writeFile(item.path, item.updated, "utf8");
+  }
+
+  return prepared.map(({ path, replacements }) => ({ path, replacements }));
+}
