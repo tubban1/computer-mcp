@@ -118,6 +118,16 @@ export function listProcesses() {
   }));
 }
 
+export function sendProcessInput(processId: string, input: string) {
+  requireCapability("ALLOW_SHELL", false);
+  const record = processRegistry.get(processId);
+  if (!record) throw new Error("Unknown process_id.");
+  if (record.exitCode !== null) throw new Error("Process has already exited.");
+  if (!record.child.stdin.writable) throw new Error("Process stdin is not writable.");
+  record.child.stdin.write(input);
+  return { processId, bytesWritten: Buffer.byteLength(input, "utf8") };
+}
+
 export function getProcessOutput(processId: string, tailChars = 20_000) {
   const record = processRegistry.get(processId);
   if (!record) throw new Error("Unknown process_id.");
