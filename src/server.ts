@@ -774,13 +774,15 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.4.0",
+          version: "0.5.0",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
           shell: envFlag("ALLOW_SHELL", false),
           gitPush: envFlag("ALLOW_GIT_PUSH", false),
           rollback: envFlag("ALLOW_ROLLBACK", false),
+          browser: envFlag("ALLOW_BROWSER", false),
+          gui: envFlag("ALLOW_GUI", false),
           auditLogEnabled: envFlag("AUDIT_LOG_ENABLED", true),
           auditLogPath: getAuditLogPath(),
         });
@@ -1370,7 +1372,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.4.0",
+    version: "0.5.0",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
