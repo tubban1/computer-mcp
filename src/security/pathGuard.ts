@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 
-function configuredRoots(): string[] {
+export function configuredRoots(): string[] {
   return (process.env.ALLOWED_DIRECTORIES ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -9,13 +9,36 @@ function configuredRoots(): string[] {
     .map((value) => path.resolve(value));
 }
 
-export async function assertAllowedPath(inputPath: string): Promise<string> {
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function realConfiguredRoots(): Promise<string[]> {
   const roots = configuredRoots();
   if (roots.length === 0) {
     throw new Error("No ALLOWED_DIRECTORIES configured. Refusing filesystem access.");
   }
 
+  const resolved: string[] = [];
+  for (const root of roots) {
+    try {
+      resolved.push(await fs.realpath(root));
+    } catch {
+      // Ignore missing configured roots; another configured root may still be valid.
+    }
+  }
+
+  if (resolved.length === 0) {
+    throw new Error("None of the configured ALLOWED_DIRECTORIES exist.");
+  }
+  return resolved;
+}
+
+export async function assertAllowedExistingPath(inputPath: string): Promise<string> {
+  const roots = await realConfiguredRoots();
   const requested = path.resolve(inputPath);
+
   let realRequested: string;
   try {
     realRequested = await fs.realpath(requested);
@@ -23,18 +46,49 @@ export async function assertAllowedPath(inputPath: string): Promise<string> {
     throw new Error("Path does not exist.");
   }
 
-  for (const root of roots) {
-    let realRoot: string;
-    try {
-      realRoot = await fs.realpath(root);
-    } catch {
-      continue;
-    }
-    const relative = path.relative(realRoot, realRequested);
-    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-      return realRequested;
-    }
+  if (roots.some((root) => isWithin(root, realRequested))) {
+    return realRequested;
   }
 
   throw new Error("Access denied: path is outside ALLOWED_DIRECTORIES.");
 }
+
+export async function assertAllowedTargetPath(inputPath: string): Promise<string> {
+  const roots = await realConfiguredRoots();
+  const requested = path.resolve(inputPath);
+
+  // Existing targets must resolve inside an allowed root, including symlinks.
+  try {
+    await fs.lstat(requested);
+    return await assertAllowedExistingPath(requested);
+  } catch {
+    // For a new path, validate the nearest existing ancestor after resolving symlinks.
+  }
+
+  let ancestor = path.dirname(requested);
+  while (true) {
+    try {
+      const realAncestor = await fs.realpath(ancestor);
+      if (!roots.some((root) => isWithin(root, realAncestor))) {
+        throw new Error("Access denied: target parent is outside ALLOWED_DIRECTORIES.");
+      }
+
+      const relativeTail = path.relative(ancestor, requested);
+      if (relativeTail.startsWith("..") || path.isAbsolute(relativeTail)) {
+        throw new Error("Access denied: invalid target path.");
+      }
+
+      return path.resolve(realAncestor, relativeTail);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Access denied")) throw error;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+    }
+  }
+
+  throw new Error("Access denied: could not resolve an allowed parent directory.");
+}
+
+// Backward-compatible alias used by the original read-only tools.
+export const assertAllowedPath = assertAllowedExistingPath;
