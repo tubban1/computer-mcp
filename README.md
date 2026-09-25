@@ -1,131 +1,122 @@
 # computer-mcp
 
-A personal Computer MCP server for connecting ChatGPT to controlled folders, shell processes, Git, and recoverable coding workflows on your Mac.
+A personal Computer MCP runtime for ChatGPT with pluggable providers for filesystem, shell, Git, transactions, browser automation, and macOS desktop control.
 
-## v0.4
+## v0.5 — Provider architecture
 
-v0.4 adds Git-backed task transactions, automatic checkpoints, rollback, and failure recovery.
+v0.5 introduces a provider layer so computer-mcp can grow beyond file/terminal tools without turning the server into one monolithic implementation.
 
-### Transaction tools
+Built-in providers:
 
-- `begin_transaction`
-- `transaction_status`
-- `list_transactions`
-- `rollback_transaction`
-- `complete_transaction`
-- `execute_command_transactional`
+- `filesystem`
+- `shell`
+- `git`
+- `transaction`
+- `browser`
+- `desktop`
 
-A transaction checkpoint captures the repository worktree, including tracked and untracked non-ignored files, without changing the real Git index or branch.
+Use:
 
-Rollback:
-- restores the checkpoint worktree;
-- restores the original HEAD and staged patch;
-- removes new untracked non-ignored files created after the checkpoint;
-- creates a hidden safety ref before rewinding commits.
+```text
+provider_status
+```
 
-Ignored files and external/network side effects are intentionally not rolled back.
+to see availability, enablement, and provider details.
 
-## Tool count
+## Browser provider
 
-v0.4 exposes **36 tools** across:
+The browser provider uses `playwright-core` with an existing Chromium-based browser. On macOS it auto-detects Google Chrome, Chromium, or Microsoft Edge.
+
+Tools:
+
+- `browser_open`
+- `browser_list_tabs`
+- `browser_use_tab`
+- `browser_snapshot`
+- `browser_click`
+- `browser_type`
+- `browser_screenshot`
+- `browser_close`
+
+Enable it with:
+
+```env
+ALLOW_BROWSER=true
+BROWSER_HEADLESS=false
+```
+
+The managed browser uses a separate persistent profile by default:
+
+```text
+~/.computer-mcp/browser-profile
+```
+
+Web page content is treated as untrusted data. Browser click/type tools are marked destructive/open-world because they may trigger external side effects.
+
+## Desktop provider
+
+The desktop provider currently targets macOS and uses native `osascript` / `screencapture`.
+
+Tools:
+
+- `desktop_frontmost_app`
+- `desktop_open_app`
+- `desktop_click`
+- `desktop_type`
+- `desktop_key`
+- `desktop_screenshot`
+
+Enable it with:
+
+```env
+ALLOW_GUI=true
+```
+
+macOS may ask for:
+- Accessibility permission for click/keyboard automation
+- Screen Recording permission for screenshots
+
+## Existing providers
+
+The previous capabilities remain available:
 
 - filesystem read/search/write
 - shell and managed processes
 - Git
-- audit/capability introspection
-- recoverable transactions
+- audit log
+- Git-backed task transactions and rollback
 
-## Recommended coding workflow
+## Tool count
 
-For a normal code task:
+v0.5 exposes **51 MCP tools** with annotations.
 
-1. `begin_transaction`
-2. `read_multiple_files` / `list_directory_tree`
-3. `batch_edit_files` or `apply_patch`
-4. `git_diff`
-5. run verification
-6. `git_add` → `git_commit` → `git_push`
-7. `complete_transaction`
-
-If anything goes badly:
-
-```text
-rollback_transaction(transaction_id)
-```
-
-For commands that may generate or rewrite repository files, use:
-
-```text
-execute_command_transactional
-```
-
-It automatically creates a checkpoint and rolls repository files back on non-zero exit or timeout.
-
-## Safety model
-
-Filesystem operations are constrained to `ALLOWED_DIRECTORIES` with real-path checks.
-
-Capability flags:
-
-```env
-ALLOW_WRITE=true
-ALLOW_DELETE=false
-ALLOW_SHELL=false
-ALLOW_GIT_PUSH=false
-ALLOW_ROLLBACK=false
-```
-
-`ALLOW_ROLLBACK` is separate because rollback may rewind commits on the current branch. Before doing so, computer-mcp creates a hidden recovery ref under:
-
-```text
-refs/computer-mcp/pre-rollback/
-```
-
-Shell execution is not sandboxed by `ALLOWED_DIRECTORIES`; shell commands run with the permissions of the macOS user running the server.
-
-## MCP annotations
-
-All tools advertise read-only, destructive, idempotent, and open-world hints where appropriate so compatible clients can make better permission decisions.
-
-## Audit log
-
-Privacy-aware JSONL audit logging is enabled by default:
-
-```text
-~/.computer-mcp/audit.jsonl
-```
-
-Sensitive payloads such as file contents, patches, shell commands, replacement text, and process input are redacted and hashed.
-
-## Install
-
-```bash
-git clone https://github.com/tubban1/computer-mcp.git
-cd computer-mcp
-npm install
-cp .env.example .env
-```
-
-Example personal-development configuration:
+## Example configuration
 
 ```env
 PORT=8787
 ALLOWED_DIRECTORIES=/Users/wahaha/Documents/Me/Project/cursor
+
 ALLOW_WRITE=true
 ALLOW_DELETE=true
 ALLOW_SHELL=true
 ALLOW_GIT_PUSH=true
 ALLOW_ROLLBACK=true
+
+ALLOW_BROWSER=true
+ALLOW_GUI=true
+BROWSER_HEADLESS=false
+
 AUDIT_LOG_ENABLED=true
 ```
 
 ## Run
 
 ```bash
+npm install
 npm run dev
 ```
 
-Health check:
+Health:
 
 ```bash
 curl http://127.0.0.1:8787/health
@@ -138,3 +129,14 @@ http://127.0.0.1:8787/mcp
 ```
 
 After changing tool definitions, restart the local server and tunnel client, then refresh/reconnect the ChatGPT app so it rescans the tool catalog.
+
+## Provider roadmap
+
+The provider boundary is intended to support future implementations such as:
+
+- alternate browser engines
+- Windows/Linux desktop providers
+- Docker/container execution providers
+- remote SSH providers
+- cloud VM providers
+- specialized app providers
