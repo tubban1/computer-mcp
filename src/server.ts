@@ -1003,7 +1003,9 @@ app.all("/mcp", async (req, res) => {
       const server = createServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (id) => sessions.set(id, { transport, server }),
+        onsessioninitialized: (id): void => {
+          sessions.set(id, { transport, server });
+        },
       });
       transport.onclose = () => {
         if (transport.sessionId) sessions.delete(transport.sessionId);
