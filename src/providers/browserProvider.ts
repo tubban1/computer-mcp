@@ -254,46 +254,58 @@ class BrowserProvider implements ComputerProvider {
 
   async snapshot(maxChars = 30_000) {
     const page = await this.page();
-    const data = await page.evaluate(() => {
-      const visible = (el: Element) => {
-        const style = window.getComputedStyle(el);
-        const rect = (el as HTMLElement).getBoundingClientRect();
-        return (
-          style.visibility !== "hidden" &&
-          style.display !== "none" &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
+    const data = (await page.evaluate(`
+      (() => {
+        const visible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return (
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        };
 
-      const text = document.body?.innerText ?? "";
-      const links = Array.from(document.querySelectorAll("a"))
-        .filter(visible)
-        .slice(0, 200)
-        .map((a) => ({
-          text: (a.textContent ?? "").trim().slice(0, 200),
-          href: (a as HTMLAnchorElement).href,
-        }))
-        .filter((x) => x.text || x.href);
+        const text = document.body?.innerText ?? "";
+        const links = Array.from(document.querySelectorAll("a"))
+          .filter(visible)
+          .slice(0, 200)
+          .map((a) => ({
+            text: (a.textContent ?? "").trim().slice(0, 200),
+            href: a.href,
+          }))
+          .filter((x) => x.text || x.href);
 
-      const controls = Array.from(
-        document.querySelectorAll("button,input,textarea,select,[role=button]"),
-      )
-        .filter(visible)
-        .slice(0, 200)
-        .map((el) => ({
-          tag: el.tagName.toLowerCase(),
-          type: el.getAttribute("type"),
-          role: el.getAttribute("role"),
-          name:
-            el.getAttribute("aria-label") ||
-            el.getAttribute("name") ||
-            (el.textContent ?? "").trim().slice(0, 120),
-          placeholder: el.getAttribute("placeholder"),
-        }));
+        const controls = Array.from(
+          document.querySelectorAll("button,input,textarea,select,[role=button]"),
+        )
+          .filter(visible)
+          .slice(0, 200)
+          .map((el) => ({
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute("type"),
+            role: el.getAttribute("role"),
+            name:
+              el.getAttribute("aria-label") ||
+              el.getAttribute("name") ||
+              (el.textContent ?? "").trim().slice(0, 120),
+            placeholder: el.getAttribute("placeholder"),
+          }));
 
-      return { text, links, controls };
-    });
+        return { text, links, controls };
+      })()
+    `)) as {
+      text: string;
+      links: Array<{ text: string; href: string }>;
+      controls: Array<{
+        tag: string;
+        type: string | null;
+        role: string | null;
+        name: string;
+        placeholder: string | null;
+      }>;
+    };
 
     return {
       url: page.url(),
