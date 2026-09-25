@@ -771,7 +771,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.3.0",
+          version: "0.4.0",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -1046,7 +1046,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
