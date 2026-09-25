@@ -35,6 +35,8 @@ const sensitiveKeys = new Set([
   "patch",
   "input",
   "command",
+  "text",
+  "url",
 ]);
 
 export function sanitizeAuditArgs(value: unknown, key?: string): unknown {
