@@ -22,6 +22,7 @@ import {
   getProcessOutput,
   killProcess,
   listProcesses,
+  sendProcessInput,
   startProcess,
 } from "./tools/shellOps.js";
 import {
@@ -277,6 +278,22 @@ function createServer() {
     async () => {
       try {
         return ok(listProcesses());
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "send_process_input",
+    "Send text to stdin of a process started by this computer-mcp instance. Requires ALLOW_SHELL=true.",
+    {
+      process_id: z.string(),
+      input: z.string(),
+    },
+    async ({ process_id, input }) => {
+      try {
+        return ok(sendProcessInput(process_id, input));
       } catch (error) {
         return fail(error);
       }
