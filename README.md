@@ -1,53 +1,83 @@
 # computer-mcp
 
-A personal Computer MCP server for connecting ChatGPT (or another MCP client) to a controlled set of folders on your Mac.
+A personal Computer MCP server for connecting ChatGPT to controlled folders, shell processes, and Git on your Mac.
 
-## v0.2 capabilities
+## v0.3
 
-### Filesystem
-- `list_directory`
-- `read_file`
-- `file_info`
-- `search_files`
-- `create_directory`
-- `write_file`
-- `append_file`
-- `edit_file`
-- `move_path`
-- `copy_path`
-- `delete_path`
+v0.3 focuses on safer long-term use and faster coding workflows.
 
-### Shell / processes
-- `execute_command`
-- `start_process`
-- `list_processes`
-- `get_process_output`
-- `send_process_input`
-- `kill_process`
+### 30 tools
 
-### Git
-- `git_status`
-- `git_diff`
-- `git_log`
-- `git_add`
-- `git_commit`
-- `git_pull`
-- `git_push`
+**Read/search**
+- `list_directory`, `list_directory_tree`
+- `read_file`, `read_multiple_files`
+- `file_info`, `search_files`
+- `get_capabilities`, `get_audit_log`
+
+**Write/edit**
+- `create_directory`, `write_file`, `append_file`
+- `edit_file`, `batch_edit_files`
+- `move_path`, `copy_path`, `delete_path`
+
+**Shell/process**
+- `execute_command`, `start_process`, `list_processes`
+- `send_process_input`, `get_process_output`, `kill_process`
+
+**Git**
+- `git_status`, `git_diff`, `git_log`
+- `git_add`, `git_commit`, `git_pull`, `git_push`
 - `apply_patch`
 
-## Security model
+## Safety model
 
-Filesystem tools are constrained to `ALLOWED_DIRECTORIES` and real paths are checked to reduce symlink escapes.
+Filesystem operations are constrained to `ALLOWED_DIRECTORIES` with real-path checks to reduce symlink escapes.
 
-Write operations are controlled by:
-- `ALLOW_WRITE` — defaults to enabled
-- `ALLOW_DELETE` — defaults to disabled
-- `ALLOW_SHELL` — defaults to disabled
-- `ALLOW_GIT_PUSH` — defaults to disabled
+Capabilities:
+- `ALLOW_WRITE` — defaults to `true`
+- `ALLOW_DELETE` — defaults to `false`
+- `ALLOW_SHELL` — defaults to `false`
+- `ALLOW_GIT_PUSH` — defaults to `false`
 
-**Important:** `ALLOW_SHELL=true` grants arbitrary shell execution under your macOS user account. `ALLOWED_DIRECTORIES` does not sandbox shell commands. Only enable it for a trusted personal MCP.
+**Important:** shell commands are not sandboxed by `ALLOWED_DIRECTORIES`. When `ALLOW_SHELL=true`, commands run with the permissions of the macOS user running computer-mcp.
 
-Git operations disable repository hooks for MCP-issued Git commands.
+Every tool now advertises MCP behavior annotations such as read-only/destructive/idempotent/open-world hints so compatible clients can make better permission decisions.
+
+## Audit log
+
+Tool calls are logged as JSONL by default to:
+
+```text
+~/.computer-mcp/audit.jsonl
+```
+
+The audit log intentionally redacts or hashes sensitive payload fields including:
+- file contents
+- exact old/new replacement text
+- unified patches
+- shell commands
+- process stdin
+
+Paths, tool names, timestamps, duration, success/error state, and non-sensitive parameters remain visible.
+
+Disable or relocate it with:
+
+```env
+AUDIT_LOG_ENABLED=false
+AUDIT_LOG_PATH=/custom/path/audit.jsonl
+```
+
+## Faster coding workflow
+
+For multi-file changes, prefer:
+
+1. `read_multiple_files`
+2. `batch_edit_files`
+3. `git_diff`
+4. `git_add`
+5. `git_commit`
+6. `git_push`
+
+This avoids repeated round trips for simple edits across several files.
 
 ## Install
 
@@ -58,18 +88,17 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env`:
+Example personal-development configuration:
 
 ```env
 PORT=8787
-ALLOWED_DIRECTORIES=/Users/YOUR_MAC_USERNAME/Documents/Me/Project/cursor
+ALLOWED_DIRECTORIES=/Users/wahaha/Documents/Me/Project/cursor
 ALLOW_WRITE=true
 ALLOW_DELETE=true
 ALLOW_SHELL=true
 ALLOW_GIT_PUSH=true
+AUDIT_LOG_ENABLED=true
 ```
-
-For a narrower setup, keep destructive/shell flags false until needed.
 
 ## Run
 
@@ -89,30 +118,4 @@ MCP endpoint:
 http://127.0.0.1:8787/mcp
 ```
 
-## ChatGPT + Secure MCP Tunnel
-
-Keep two processes running:
-
-```bash
-# Terminal 1
-npm run dev
-```
-
-```bash
-# Terminal 2
-./tunnel-client-runtime run
-```
-
-After upgrading the MCP server, restart `npm run dev` and refresh/reconnect the ChatGPT app so it rescans the tool list.
-
-## Recommended permission boundary
-
-Prefer a project root such as:
-
-```text
-/Users/wahaha/Documents/Me/Project/cursor
-```
-
-instead of your whole home directory.
-
-For high-risk operations such as deletion, shell execution, and remote Git push, use ChatGPT's plugin permission controls so the app asks before making changes.
+After changing tool definitions, restart the local server and tunnel client, then refresh/reconnect the ChatGPT app so it rescans the tool catalog.
