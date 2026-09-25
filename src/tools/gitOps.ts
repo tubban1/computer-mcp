@@ -7,7 +7,7 @@ async function runGit(args: string[], cwd: string, stdin?: string) {
 
   return await new Promise<{ cwd: string; exitCode: number | null; stdout: string; stderr: string }>(
     (resolve, reject) => {
-      const child = spawn("git", ["-C", safeCwd, ...args], {
+      const child = spawn("git", ["-C", safeCwd, "-c", "core.hooksPath=/dev/null", ...args], {
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
       });
