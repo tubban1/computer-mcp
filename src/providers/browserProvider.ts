@@ -125,9 +125,10 @@ class BrowserProvider implements ComputerProvider {
       throw new Error("No supported Chromium browser executable was found.");
     }
 
+    const configuredProfile = process.env.BROWSER_PROFILE_DIR?.trim();
     const userDataDir =
-      process.env.BROWSER_PROFILE_DIR?.trim() ||
-      path.join(os.homedir(), ".computer-mcp", "browser-profile");
+      configuredProfile ||
+      path.join(os.homedir(), ".computer-mcp", "browser-profiles", `runtime-${process.pid}`);
     await fs.mkdir(userDataDir, { recursive: true });
 
     const port = await findFreePort();
@@ -157,7 +158,9 @@ class BrowserProvider implements ComputerProvider {
 
     try {
       await waitForCdp(port, child);
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, {
+        timeout: 10_000,
+      });
       const context = browser.contexts()[0];
       if (!context) throw new Error("Chrome started, but no default browser context was available.");
 
@@ -321,6 +324,16 @@ class BrowserProvider implements ComputerProvider {
     }
     if (child && child.exitCode == null) {
       child.kill("SIGTERM");
+    }
+
+    if (!process.env.BROWSER_PROFILE_DIR?.trim()) {
+      const runtimeProfile = path.join(
+        os.homedir(),
+        ".computer-mcp",
+        "browser-profiles",
+        `runtime-${process.pid}`,
+      );
+      await fs.rm(runtimeProfile, { recursive: true, force: true }).catch(() => undefined);
     }
 
     return { closed: true };
