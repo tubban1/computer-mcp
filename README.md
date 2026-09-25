@@ -1,83 +1,101 @@
 # computer-mcp
 
-A personal Computer MCP server for connecting ChatGPT to controlled folders, shell processes, and Git on your Mac.
+A personal Computer MCP server for connecting ChatGPT to controlled folders, shell processes, Git, and recoverable coding workflows on your Mac.
 
-## v0.3
+## v0.4
 
-v0.3 focuses on safer long-term use and faster coding workflows.
+v0.4 adds Git-backed task transactions, automatic checkpoints, rollback, and failure recovery.
 
-### 30 tools
+### Transaction tools
 
-**Read/search**
-- `list_directory`, `list_directory_tree`
-- `read_file`, `read_multiple_files`
-- `file_info`, `search_files`
-- `get_capabilities`, `get_audit_log`
+- `begin_transaction`
+- `transaction_status`
+- `list_transactions`
+- `rollback_transaction`
+- `complete_transaction`
+- `execute_command_transactional`
 
-**Write/edit**
-- `create_directory`, `write_file`, `append_file`
-- `edit_file`, `batch_edit_files`
-- `move_path`, `copy_path`, `delete_path`
+A transaction checkpoint captures the repository worktree, including tracked and untracked non-ignored files, without changing the real Git index or branch.
 
-**Shell/process**
-- `execute_command`, `start_process`, `list_processes`
-- `send_process_input`, `get_process_output`, `kill_process`
+Rollback:
+- restores the checkpoint worktree;
+- restores the original HEAD and staged patch;
+- removes new untracked non-ignored files created after the checkpoint;
+- creates a hidden safety ref before rewinding commits.
 
-**Git**
-- `git_status`, `git_diff`, `git_log`
-- `git_add`, `git_commit`, `git_pull`, `git_push`
-- `apply_patch`
+Ignored files and external/network side effects are intentionally not rolled back.
+
+## Tool count
+
+v0.4 exposes **36 tools** across:
+
+- filesystem read/search/write
+- shell and managed processes
+- Git
+- audit/capability introspection
+- recoverable transactions
+
+## Recommended coding workflow
+
+For a normal code task:
+
+1. `begin_transaction`
+2. `read_multiple_files` / `list_directory_tree`
+3. `batch_edit_files` or `apply_patch`
+4. `git_diff`
+5. run verification
+6. `git_add` → `git_commit` → `git_push`
+7. `complete_transaction`
+
+If anything goes badly:
+
+```text
+rollback_transaction(transaction_id)
+```
+
+For commands that may generate or rewrite repository files, use:
+
+```text
+execute_command_transactional
+```
+
+It automatically creates a checkpoint and rolls repository files back on non-zero exit or timeout.
 
 ## Safety model
 
-Filesystem operations are constrained to `ALLOWED_DIRECTORIES` with real-path checks to reduce symlink escapes.
+Filesystem operations are constrained to `ALLOWED_DIRECTORIES` with real-path checks.
 
-Capabilities:
-- `ALLOW_WRITE` — defaults to `true`
-- `ALLOW_DELETE` — defaults to `false`
-- `ALLOW_SHELL` — defaults to `false`
-- `ALLOW_GIT_PUSH` — defaults to `false`
+Capability flags:
 
-**Important:** shell commands are not sandboxed by `ALLOWED_DIRECTORIES`. When `ALLOW_SHELL=true`, commands run with the permissions of the macOS user running computer-mcp.
+```env
+ALLOW_WRITE=true
+ALLOW_DELETE=false
+ALLOW_SHELL=false
+ALLOW_GIT_PUSH=false
+ALLOW_ROLLBACK=false
+```
 
-Every tool now advertises MCP behavior annotations such as read-only/destructive/idempotent/open-world hints so compatible clients can make better permission decisions.
+`ALLOW_ROLLBACK` is separate because rollback may rewind commits on the current branch. Before doing so, computer-mcp creates a hidden recovery ref under:
+
+```text
+refs/computer-mcp/pre-rollback/
+```
+
+Shell execution is not sandboxed by `ALLOWED_DIRECTORIES`; shell commands run with the permissions of the macOS user running the server.
+
+## MCP annotations
+
+All tools advertise read-only, destructive, idempotent, and open-world hints where appropriate so compatible clients can make better permission decisions.
 
 ## Audit log
 
-Tool calls are logged as JSONL by default to:
+Privacy-aware JSONL audit logging is enabled by default:
 
 ```text
 ~/.computer-mcp/audit.jsonl
 ```
 
-The audit log intentionally redacts or hashes sensitive payload fields including:
-- file contents
-- exact old/new replacement text
-- unified patches
-- shell commands
-- process stdin
-
-Paths, tool names, timestamps, duration, success/error state, and non-sensitive parameters remain visible.
-
-Disable or relocate it with:
-
-```env
-AUDIT_LOG_ENABLED=false
-AUDIT_LOG_PATH=/custom/path/audit.jsonl
-```
-
-## Faster coding workflow
-
-For multi-file changes, prefer:
-
-1. `read_multiple_files`
-2. `batch_edit_files`
-3. `git_diff`
-4. `git_add`
-5. `git_commit`
-6. `git_push`
-
-This avoids repeated round trips for simple edits across several files.
+Sensitive payloads such as file contents, patches, shell commands, replacement text, and process input are redacted and hashed.
 
 ## Install
 
@@ -97,6 +115,7 @@ ALLOW_WRITE=true
 ALLOW_DELETE=true
 ALLOW_SHELL=true
 ALLOW_GIT_PUSH=true
+ALLOW_ROLLBACK=true
 AUDIT_LOG_ENABLED=true
 ```
 
