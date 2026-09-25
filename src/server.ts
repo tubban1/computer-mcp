@@ -39,6 +39,13 @@ import {
   gitPush,
   gitStatus,
 } from "./tools/gitOps.js";
+import {
+  beginTransaction,
+  completeTransaction,
+  getTransactionStatus,
+  listTransactions,
+  rollbackTransaction,
+} from "./tools/transactionOps.js";
 import { appendAudit, getAuditLogPath, readAuditLog, sanitizeAuditArgs } from "./audit.js";
 import { envFlag } from "./security/capabilities.js";
 import { configuredRoots } from "./security/pathGuard.js";
@@ -99,7 +106,7 @@ function fail(error: unknown) {
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
   });
 
   server.tool(
@@ -802,6 +809,177 @@ function createServer() {
     },
   );
 
+
+  server.tool(
+    "begin_transaction",
+    "Create a Git-backed checkpoint of the current repository worktree, including tracked and untracked non-ignored files, without changing the real index or branch.",
+    {
+      cwd: z.string(),
+      label: z.string().max(200).optional(),
+    },
+    {
+      title: "Begin Transaction",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ cwd, label }) => {
+      try {
+        return ok(await beginTransaction(cwd, label ?? "computer-mcp task"));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "transaction_status",
+    "Show the current state, Git status, and diff summary for a computer-mcp transaction.",
+    { transaction_id: z.string() },
+    {
+      title: "Transaction Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ transaction_id }) => {
+      try {
+        return ok(await getTransactionStatus(transaction_id));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "list_transactions",
+    "List recent computer-mcp transactions, optionally filtered to a repository.",
+    { cwd: z.string().optional() },
+    {
+      title: "List Transactions",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ cwd }) => {
+      try {
+        return ok(await listTransactions(cwd));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "rollback_transaction",
+    "Restore a repository to a transaction checkpoint. This rewinds commits made after the checkpoint on the same branch, but creates a safety ref first. Requires ALLOW_ROLLBACK=true. Ignored files and external/network side effects are not reverted.",
+    { transaction_id: z.string() },
+    {
+      title: "Rollback Transaction",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ transaction_id }) => {
+      try {
+        return ok(await rollbackTransaction(transaction_id));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "complete_transaction",
+    "Mark a transaction complete and optionally retain its hidden Git checkpoint ref.",
+    {
+      transaction_id: z.string(),
+      keep_checkpoint: z.boolean().optional(),
+    },
+    {
+      title: "Complete Transaction",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ transaction_id, keep_checkpoint }) => {
+      try {
+        return ok(await completeTransaction(transaction_id, keep_checkpoint ?? false));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "execute_command_transactional",
+    "Run a shell command inside a Git repository with an automatic checkpoint. If the command fails or times out, repository files are automatically rolled back. External/network side effects and ignored files cannot be undone. Requires ALLOW_SHELL=true and ALLOW_ROLLBACK=true.",
+    {
+      command: z.string().min(1),
+      cwd: z.string(),
+      timeout_ms: z.number().int().min(1000).max(600000).optional(),
+      keep_checkpoint_on_success: z.boolean().optional(),
+    },
+    {
+      title: "Execute Command Transactionally",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ command, cwd, timeout_ms, keep_checkpoint_on_success }) => {
+      let tx: Awaited<ReturnType<typeof beginTransaction>> | null = null;
+      try {
+        tx = await beginTransaction(cwd, "transactional command");
+        const commandResult = await executeCommand(command, cwd, timeout_ms ?? 60000);
+
+        if (commandResult.exitCode !== 0 || commandResult.timedOut) {
+          const rollback = await rollbackTransaction(tx.id);
+          return ok({
+            transactionId: tx.id,
+            rolledBack: true,
+            commandResult,
+            rollback,
+          });
+        }
+
+        const completion = await completeTransaction(
+          tx.id,
+          keep_checkpoint_on_success ?? false,
+        );
+        return ok({
+          transactionId: tx.id,
+          rolledBack: false,
+          commandResult,
+          completion,
+        });
+      } catch (error) {
+        if (tx) {
+          try {
+            const rollback = await rollbackTransaction(tx.id);
+            return fail(
+              new Error(
+                `${error instanceof Error ? error.message : String(error)}; repository rollback succeeded via ${rollback.safetyRef}`,
+              ),
+            );
+          } catch (rollbackError) {
+            return fail(
+              new Error(
+                `${error instanceof Error ? error.message : String(error)}; rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+              ),
+            );
+          }
+        }
+        return fail(error);
+      }
+    },
+  );
+
   return server;
 }
 
@@ -873,6 +1051,7 @@ app.get("/health", (_req, res) => {
       delete: envFlag("ALLOW_DELETE", false),
       shell: envFlag("ALLOW_SHELL", false),
       gitPush: envFlag("ALLOW_GIT_PUSH", false),
+      rollback: envFlag("ALLOW_ROLLBACK", false),
       auditLog: envFlag("AUDIT_LOG_ENABLED", true),
     },
   });
@@ -880,5 +1059,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.3.0 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.4.0 listening on http://127.0.0.1:${port}/mcp`);
 });
