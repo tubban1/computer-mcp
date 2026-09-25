@@ -1,19 +1,55 @@
 # computer-mcp
 
-A minimal, read-only personal Computer MCP proof of concept for connecting ChatGPT (or another MCP client) to files on your own Mac.
+A personal Computer MCP server for connecting ChatGPT (or another MCP client) to a controlled set of folders on your Mac.
+
+## v0.2 capabilities
+
+### Filesystem
+- `list_directory`
+- `read_file`
+- `file_info`
+- `search_files`
+- `create_directory`
+- `write_file`
+- `append_file`
+- `edit_file`
+- `move_path`
+- `copy_path`
+- `delete_path`
+
+### Shell / processes
+- `execute_command`
+- `start_process`
+- `list_processes`
+- `get_process_output`
+- `send_process_input`
+- `kill_process`
+
+### Git
+- `git_status`
+- `git_diff`
+- `git_log`
+- `git_add`
+- `git_commit`
+- `git_pull`
+- `git_push`
+- `apply_patch`
 
 ## Security model
 
-v0.1 exposes only two tools:
+Filesystem tools are constrained to `ALLOWED_DIRECTORIES` and real paths are checked to reduce symlink escapes.
 
-- `list_directory`
-- `read_file`
+Write operations are controlled by:
+- `ALLOW_WRITE` — defaults to enabled
+- `ALLOW_DELETE` — defaults to disabled
+- `ALLOW_SHELL` — defaults to disabled
+- `ALLOW_GIT_PUSH` — defaults to disabled
 
-There is no shell execution, write, delete, Git, browser, or arbitrary code execution. Filesystem access is denied unless `ALLOWED_DIRECTORIES` is configured. Real paths are checked to reduce symlink traversal risk.
+**Important:** `ALLOW_SHELL=true` grants arbitrary shell execution under your macOS user account. `ALLOWED_DIRECTORIES` does not sandbox shell commands. Only enable it for a trusted personal MCP.
 
-> This is a PoC, not a hardened production remote-access service.
+Git operations disable repository hooks for MCP-issued Git commands.
 
-## 1. Install
+## Install
 
 ```bash
 git clone https://github.com/tubban1/computer-mcp.git
@@ -22,16 +58,20 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and use an **absolute** directory you are comfortable exposing, for example:
+Edit `.env`:
 
 ```env
 PORT=8787
-ALLOWED_DIRECTORIES=/Users/YOUR_MAC_USERNAME/Documents/Projects
+ALLOWED_DIRECTORIES=/Users/YOUR_MAC_USERNAME/Documents/Me/Project/cursor
+ALLOW_WRITE=true
+ALLOW_DELETE=true
+ALLOW_SHELL=true
+ALLOW_GIT_PUSH=true
 ```
 
-You can allow several roots by separating them with commas.
+For a narrower setup, keep destructive/shell flags false until needed.
 
-## 2. Run
+## Run
 
 ```bash
 npm run dev
@@ -43,33 +83,36 @@ Health check:
 curl http://127.0.0.1:8787/health
 ```
 
-The MCP endpoint is:
+MCP endpoint:
 
 ```text
 http://127.0.0.1:8787/mcp
 ```
 
-## 3. Test locally
+## ChatGPT + Secure MCP Tunnel
 
-Use MCP Inspector:
+Keep two processes running:
 
 ```bash
-npx @modelcontextprotocol/inspector@latest
+# Terminal 1
+npm run dev
 ```
 
-Connect it to the Streamable HTTP endpoint above and test `list_directory` before `read_file`.
+```bash
+# Terminal 2
+./tunnel-client-runtime run
+```
 
-## 4. Connect ChatGPT
+After upgrading the MCP server, restart `npm run dev` and refresh/reconnect the ChatGPT app so it rescans the tool list.
 
-ChatGPT cannot reach `127.0.0.1` on your Mac from the cloud. Use a supported secure HTTPS tunnel or deploy a remote bridge, then give ChatGPT the resulting HTTPS MCP endpoint.
+## Recommended permission boundary
 
-For the first test, keep the allowed directory narrow and non-sensitive. Do not expose the MCP endpoint publicly without authentication for ongoing use.
+Prefer a project root such as:
 
-## Next milestone
+```text
+/Users/wahaha/Documents/Me/Project/cursor
+```
 
-After read-only connectivity is proven:
+instead of your whole home directory.
 
-1. add authentication;
-2. add a persistent device/remote bridge if needed;
-3. integrate Desktop Commander as a provider;
-4. only then consider gated write/edit/terminal tools with explicit approval and audit logs.
+For high-risk operations such as deletion, shell execution, and remote Git push, use ChatGPT's plugin permission controls so the app asks before making changes.
