@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import net from "node:net";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   chromium,
   type Browser,
@@ -84,6 +84,19 @@ async function waitForCdp(port: number, child: ChildProcess, timeoutMs = 20_000)
   throw new Error(`Timed out waiting for Chrome DevTools Protocol. Last error: ${lastError}`);
 }
 
+function runningUnderRosetta(): boolean {
+  if (process.platform !== "darwin" || process.arch !== "x64") return false;
+  try {
+    return (
+      execFileSync("/usr/sbin/sysctl", ["-in", "sysctl.proc_translated"], {
+        encoding: "utf8",
+      }).trim() === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function requireBrowserEnabled(): void {
   if (!envFlag("ALLOW_BROWSER", false)) {
     throw new Error("Browser provider is disabled. Set ALLOW_BROWSER=true and restart computer-mcp.");
@@ -113,6 +126,9 @@ class BrowserProvider implements ComputerProvider {
         connected: Boolean(this.context),
         headless: envFlag("BROWSER_HEADLESS", false),
         cdpPort: this.cdpPort,
+        processArch: process.arch,
+        rosetta: runningUnderRosetta(),
+        browserSpawnArch: runningUnderRosetta() ? "arm64" : process.arch,
       },
     };
   }
@@ -145,7 +161,11 @@ class BrowserProvider implements ComputerProvider {
     ];
     if (headless) args.unshift("--headless=new");
 
-    const child = spawn(executablePath, args, {
+    const useNativeArm = runningUnderRosetta();
+    const launchCommand = useNativeArm ? "/usr/bin/arch" : executablePath;
+    const launchArgs = useNativeArm ? ["-arm64", executablePath, ...args] : args;
+
+    const child = spawn(launchCommand, launchArgs, {
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     });
