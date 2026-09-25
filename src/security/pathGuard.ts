@@ -57,14 +57,20 @@ export async function assertAllowedTargetPath(inputPath: string): Promise<string
   const roots = await realConfiguredRoots();
   const requested = path.resolve(inputPath);
 
-  // Existing targets must resolve inside an allowed root, including symlinks.
+  let exists = false;
   try {
     await fs.lstat(requested);
-    return await assertAllowedExistingPath(requested);
+    exists = true;
   } catch {
-    // For a new path, validate the nearest existing ancestor after resolving symlinks.
+    exists = false;
   }
 
+  // Existing targets must resolve inside an allowed root, including symlinks.
+  if (exists) {
+    return await assertAllowedExistingPath(requested);
+  }
+
+  // For a new path, validate the nearest existing ancestor after resolving symlinks.
   let ancestor = path.dirname(requested);
   while (true) {
     try {
