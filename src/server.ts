@@ -52,6 +52,12 @@ import { configuredRoots } from "./security/pathGuard.js";
 import { getProviderStatuses } from "./providers/registry.js";
 import { browserProvider } from "./providers/browserProvider.js";
 import { desktopProvider } from "./providers/desktopProvider.js";
+import {
+  executeActionBatch,
+  executeRoutedAction,
+  getRouterCatalog,
+  validateRoutedAction,
+} from "./router/actionRouter.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -109,7 +115,7 @@ function fail(error: unknown) {
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.5.0",
+    version: "0.6.0",
   });
 
   server.tool(
@@ -774,7 +780,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.5.0",
+          version: "0.6.0",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -1305,6 +1311,89 @@ function createServer() {
     },
   );
 
+
+  server.tool(
+    "router_catalog",
+    "List provider-routed action names with provider, side-effect, and open-world metadata. Use this when selecting a computer_action or computer_batch route.",
+    {},
+    {
+      title: "Router Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async () => {
+      try {
+        return ok(getRouterCatalog());
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "computer_action",
+    "Route one structured action to the correct provider. This is a compact alternative to choosing among many low-level tools. Set dry_run=true to validate routing and arguments without executing.",
+    {
+      action: z.string().min(1),
+      args: z.record(z.unknown()).optional(),
+      dry_run: z.boolean().optional(),
+    },
+    {
+      title: "Computer Action",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ action, args, dry_run }) => {
+      try {
+        if (dry_run) {
+          return ok({ dryRun: true, ...validateRoutedAction(action, args ?? {}) });
+        }
+        return ok(await executeRoutedAction(action, args ?? {}));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "computer_batch",
+    "Execute up to 30 provider-routed actions sequentially in a single MCP call, reducing round trips. Later steps can reference earlier results with an object like {\"$ref\":\"stepId.field\"}. Defaults to stopping on first error. Use dry_run=true to validate the whole plan without executing side effects.",
+    {
+      steps: z.array(
+        z.object({
+          id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+          action: z.string().min(1),
+          args: z.record(z.unknown()).optional(),
+        }),
+      ).min(1).max(30),
+      stop_on_error: z.boolean().optional(),
+      dry_run: z.boolean().optional(),
+    },
+    {
+      title: "Computer Batch",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ steps, stop_on_error, dry_run }) => {
+      try {
+        return ok(
+          await executeActionBatch(steps, {
+            stopOnError: stop_on_error ?? true,
+            dryRun: dry_run ?? false,
+          }),
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
   return server;
 }
 
@@ -1372,7 +1461,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.5.0",
+    version: "0.6.0",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1388,5 +1477,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.5.0 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.6.0 listening on http://127.0.0.1:${port}/mcp`);
 });
