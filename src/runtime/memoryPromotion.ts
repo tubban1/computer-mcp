@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { injectTestFault } from "./faultInjection.js";
 import {
   appendTaskEvent,
   readPersistentTask,
@@ -318,6 +319,25 @@ export async function inspectPromotionCandidate(
   };
 }
 
+async function ensurePromotionBacklink(
+  task: PersistentTask,
+  record: SemanticMemoryRecord,
+): Promise<boolean> {
+  const alreadyLinked = task.events.some(
+    (event) =>
+      event.type === "semantic_promoted" &&
+      event.message.includes(record.id),
+  );
+  if (alreadyLinked) return false;
+
+  appendTaskEvent(task, {
+    type: "semantic_promoted",
+    message: `Promoted semantic memory ${record.id}: ${record.title}`,
+  });
+  await writePersistentTask(task);
+  return true;
+}
+
 export async function promoteSemanticMemory(
   input: PromotionCandidateInput & { confirm: boolean },
 ): Promise<SemanticMemoryRecord> {
@@ -343,9 +363,18 @@ export async function promoteSemanticMemory(
 
   const duplicate = await findSemanticMemoryByDigest(candidate.contentDigest);
   if (duplicate) {
-    throw new Error(
-      `Equivalent semantic memory already exists as ${duplicate.id}.`,
-    );
+    const samePromotion =
+      duplicate.source.taskId === candidate.taskId &&
+      duplicate.promotion.candidateDigest === candidate.candidateDigest;
+    if (!samePromotion) {
+      throw new Error(
+        `Equivalent semantic memory already exists as ${duplicate.id}.`,
+      );
+    }
+
+    const duplicateTask = await readPersistentTask(candidate.taskId);
+    await ensurePromotionBacklink(duplicateTask, duplicate);
+    return duplicate;
   }
 
   const task = await readPersistentTask(candidate.taskId);
@@ -393,12 +422,8 @@ export async function promoteSemanticMemory(
   };
 
   await writeSemanticMemory(record);
-
-  appendTaskEvent(task, {
-    type: "semantic_promoted",
-    message: `Promoted semantic memory ${record.id}: ${record.title}`,
-  });
-  await writePersistentTask(task);
+  injectTestFault("semantic.after_memory_write_before_backlink");
+  await ensurePromotionBacklink(task, record);
 
   return record;
 }

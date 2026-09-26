@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { assertAllowedExistingPath } from "../security/pathGuard.js";
 import { requireCapability } from "../security/capabilities.js";
 import { currentExecutionContext } from "../runtime/executionContext.js";
+import { injectTestFault } from "../runtime/faultInjection.js";
 import {
   ensureWorkspaceWriteLease,
   releaseWorkspaceLeasesForTask,
@@ -31,6 +32,7 @@ export interface TransactionMetadata {
   completedAt?: string;
   rolledBackAt?: string;
   safetyRef?: string;
+  checkpointRetained?: boolean;
 }
 
 function transactionDir(): string {
@@ -93,9 +95,33 @@ async function readTransaction(id: string): Promise<TransactionMetadata> {
   return JSON.parse(text) as TransactionMetadata;
 }
 
+async function atomicWriteText(
+  target: string,
+  content: string,
+  faultPoint?: string,
+): Promise<void> {
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temp, content, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    if (faultPoint) injectTestFault(faultPoint);
+    await fs.rename(temp, target);
+    await fs.chmod(target, 0o600).catch(() => undefined);
+  } finally {
+    await fs.rm(temp, { force: true }).catch(() => undefined);
+  }
+}
+
 async function writeTransaction(metadata: TransactionMetadata): Promise<void> {
-  await fs.mkdir(transactionDir(), { recursive: true });
-  await fs.writeFile(metadataPath(metadata.id), JSON.stringify(metadata, null, 2) + "\n", "utf8");
+  await atomicWriteText(
+    metadataPath(metadata.id),
+    JSON.stringify(metadata, null, 2) + "\n",
+    "git.transaction.after_metadata_temp_before_commit",
+  );
 }
 
 function transactionId(): string {
@@ -149,7 +175,7 @@ export async function beginTransaction(cwd: string, label = "computer-mcp task")
 
     const stagedPatch = (await runGit(repoRoot, ["diff", "--cached", "--binary", "HEAD"])).stdout;
     const stagedFile = stagedPatchPath(id);
-    await fs.writeFile(stagedFile, stagedPatch, "utf8");
+    await atomicWriteText(stagedFile, stagedPatch);
 
     const originalStatus = (await runGit(repoRoot, ["status", "--short", "--branch"])).stdout;
 
@@ -170,6 +196,7 @@ export async function beginTransaction(cwd: string, label = "computer-mcp task")
     };
 
     await writeTransaction(metadata);
+    injectTestFault("git.transaction.after_active_receipt");
 
     return {
       id,
@@ -246,8 +273,26 @@ export async function rollbackTransaction(id: string) {
     purpose: `Rollback transaction ${id}`,
     auto: true,
   });
+
+  if (metadata.state === "rolled_back") {
+    await releaseWorkspaceLeasesForTask(`transaction:${id}`);
+    return {
+      id,
+      state: metadata.state,
+      repoRoot: metadata.repoRoot,
+      restoredHead: metadata.originalHead,
+      safetyRef: metadata.safetyRef ?? null,
+      recovered: true,
+      status: (
+        await runGit(metadata.repoRoot, ["status", "--short", "--branch"])
+      ).stdout,
+      note: "Rollback receipt already committed; lease cleanup was reconciled.",
+    };
+  }
   if (metadata.state !== "active") {
-    throw new Error(`Transaction ${id} is ${metadata.state}; only active transactions can be rolled back.`);
+    throw new Error(
+      `Transaction ${id} is ${metadata.state}; only active transactions can be rolled back.`,
+    );
   }
 
   const repoRoot = await assertAllowedExistingPath(metadata.repoRoot);
@@ -278,6 +323,7 @@ export async function rollbackTransaction(id: string) {
   metadata.rolledBackAt = new Date().toISOString();
   metadata.safetyRef = safetyRef;
   await writeTransaction(metadata);
+  injectTestFault("git.transaction.after_rollback_receipt_before_lease_release");
   await releaseWorkspaceLeasesForTask(`transaction:${id}`);
 
   return {
@@ -286,6 +332,7 @@ export async function rollbackTransaction(id: string) {
     repoRoot,
     restoredHead: metadata.originalHead,
     safetyRef,
+    recovered: false,
     status: (await runGit(repoRoot, ["status", "--short", "--branch"])).stdout,
     note: "Ignored files and external/network side effects are not rolled back.",
   };
@@ -301,18 +348,42 @@ export async function completeTransaction(id: string, keepCheckpoint = false) {
     purpose: `Complete transaction ${id}`,
     auto: true,
   });
+
+  const repoRoot = await assertAllowedExistingPath(metadata.repoRoot);
+
+  if (metadata.state === "completed") {
+    const retained = metadata.checkpointRetained === true;
+    if (!retained) {
+      await runGit(repoRoot, ["update-ref", "-d", metadata.checkpointRef], {
+        allowFailure: true,
+      });
+    }
+    await releaseWorkspaceLeasesForTask(`transaction:${id}`);
+    return {
+      id,
+      state: metadata.state,
+      keepCheckpoint: retained,
+      checkpointRef: retained ? metadata.checkpointRef : null,
+      recovered: true,
+    };
+  }
   if (metadata.state !== "active") {
     throw new Error(`Transaction ${id} is already ${metadata.state}.`);
   }
 
-  const repoRoot = await assertAllowedExistingPath(metadata.repoRoot);
-  if (!keepCheckpoint) {
-    await runGit(repoRoot, ["update-ref", "-d", metadata.checkpointRef], { allowFailure: true });
-  }
-
+  // Commit the durable completion receipt before deleting the optional
+  // checkpoint ref. A crash after this point can safely replay cleanup.
   metadata.state = "completed";
   metadata.completedAt = new Date().toISOString();
+  metadata.checkpointRetained = keepCheckpoint;
   await writeTransaction(metadata);
+  injectTestFault("git.transaction.after_complete_receipt_before_ref_cleanup");
+
+  if (!keepCheckpoint) {
+    await runGit(repoRoot, ["update-ref", "-d", metadata.checkpointRef], {
+      allowFailure: true,
+    });
+  }
   await releaseWorkspaceLeasesForTask(`transaction:${id}`);
 
   return {
@@ -320,5 +391,6 @@ export async function completeTransaction(id: string, keepCheckpoint = false) {
     state: metadata.state,
     keepCheckpoint,
     checkpointRef: keepCheckpoint ? metadata.checkpointRef : null,
+    recovered: false,
   };
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   createPersistentPrimitiveTask,
   getPersistentTaskStatus,
@@ -17,6 +18,7 @@ import {
   type ScheduleTrigger,
 } from "./schedulerStore.js";
 import { runtimeLifecycle } from "./runtimeLifecycle.js";
+import { injectTestFault } from "./faultInjection.js";
 
 type CreateScheduleInput = {
   label: string;
@@ -333,6 +335,38 @@ async function completeOccurrence(
   schedule.nextRunAt = next;
 }
 
+function scheduledTaskId(schedule: PersistentSchedule): string {
+  const occurrence = [
+    schedule.id,
+    schedule.nextRunAt ?? "no-next-run",
+    String(schedule.runCount),
+  ].join("\n");
+  const digest = createHash("sha256").update(occurrence).digest("hex").slice(0, 32);
+  return `task_schedule_${digest}`;
+}
+
+async function ensureScheduledTask(
+  schedule: PersistentSchedule,
+  taskId: string,
+): Promise<void> {
+  try {
+    await getPersistentTaskStatus(taskId, false);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  await createPersistentPrimitiveTask(
+    schedule.taskTemplate.label,
+    schedule.taskTemplate.steps,
+    {
+      maxConcurrency: schedule.taskTemplate.maxConcurrency,
+      failFast: schedule.taskTemplate.failFast,
+      taskId,
+    },
+  );
+}
+
 async function executeSchedule(scheduleId: string): Promise<void> {
   if (activeSchedules.has(scheduleId)) return;
   activeSchedules.add(scheduleId);
@@ -356,21 +390,20 @@ async function executeSchedule(scheduleId: string): Promise<void> {
 
     let taskId = schedule.activeTaskId;
     if (!taskId) {
-      const created = await createPersistentPrimitiveTask(
-        schedule.taskTemplate.label,
-        schedule.taskTemplate.steps,
-        {
-          maxConcurrency: schedule.taskTemplate.maxConcurrency,
-          failFast: schedule.taskTemplate.failFast,
-        },
-      );
-      taskId = created.id;
+      taskId = scheduledTaskId(schedule);
       schedule.activeTaskId = taskId;
       schedule.lastTaskId = taskId;
       schedule.lastRunAt = new Date().toISOString();
+      schedule.lastTaskStatus = "pending";
       schedule.lastError = undefined;
+
+      // Persist the occurrence identity before creating/executing its Task.
+      // After a crash, the same wake always converges on the same Task id.
       await writeSchedule(schedule);
+      injectTestFault("scheduler.after_occurrence_receipt_before_task");
     }
+
+    await ensureScheduledTask(schedule, taskId);
 
     try {
       const run = await runPersistentTask(taskId, {

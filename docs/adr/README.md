@@ -20,3 +20,4 @@ Current ADRs:
 - [0005 — Graceful drain and explicit handoff](0005-graceful-drain-handoff.md)
 - [0006 — Production upgrade protocol](0006-production-upgrade-protocol.md)
 - [0007 — Versioned durable state](0007-versioned-durable-state.md)
+- [0008 — Durable side-effect replay](0008-durable-side-effect-replay.md)

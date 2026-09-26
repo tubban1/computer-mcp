@@ -475,3 +475,43 @@ Verification:
 npm run verify:state-schema
 npm run verify:upgrade-runtime
 ```
+
+
+### v0.9.15 — Crash-Replay Recovery Matrix
+
+v0.9.15 hardens durable execution around crash windows where the Runtime can stop between a receipt and its side effect.
+
+The core rule is:
+
+```text
+persist deterministic identity / intent
+        ↓
+perform side effect
+        ↓
+persist completion receipt
+        ↓
+cleanup
+```
+
+Recovery reuses the same durable identity rather than generating a second logical operation.
+
+Key changes:
+
+- filesystem text writes/edits use temp + atomic replace
+- Scheduler occurrences persist a deterministic Task id before Task creation
+- Loop phases persist a deterministic Task id before Task creation
+- semantic promotion can repair a missing M2 provenance backlink after the M3 write committed
+- workspace handoff adds a durable `releasing` state and replay-safe takeover completion
+- Git transaction completion/rollback receipts commit before cleanup and lease release
+- same-Runtime disconnected MCP session-only workspace leases are reclaimed after a reconnect grace period when no Task/process pin exists
+- test-only named fault injection exercises these windows deterministically
+
+Existing managed-process recovery, browser-session pending-send protection, WeChat pending-send protection, and state-migration journal recovery are combined with the new crash-window verifier by:
+
+```bash
+npm run verify:recovery-matrix
+```
+
+See [Fault recovery matrix](../operations/fault-recovery.md) and [ADR-0008](../adr/0008-durable-side-effect-replay.md).
+
+The Primitive ABI remains unchanged; these changes live in Runtime durability/orchestration and provider-side mutation semantics.

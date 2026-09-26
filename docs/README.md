@@ -51,6 +51,7 @@ Contracts intended to remain stable across implementations.
 - [Graceful drain and workspace handoff](operations/graceful-drain-and-handoff.md)
 - [Configuration](operations/configuration.md)
 - [Recovery](operations/recovery.md)
+- [Fault recovery matrix](operations/fault-recovery.md)
 - [Troubleshooting](operations/troubleshooting.md)
 
 ## Security
@@ -77,6 +78,7 @@ ADRs explain why important design choices were made, not just what the current c
 - [ADR-0005: Graceful drain and explicit handoff](adr/0005-graceful-drain-handoff.md)
 - [ADR-0006: Production upgrade protocol](adr/0006-production-upgrade-protocol.md)
 - [ADR-0007: Versioned durable state](adr/0007-versioned-durable-state.md)
+- [ADR-0008: Durable side-effect replay](adr/0008-durable-side-effect-replay.md)
 
 ## Archive
 

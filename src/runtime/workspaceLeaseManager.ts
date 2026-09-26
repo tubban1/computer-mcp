@@ -12,6 +12,7 @@ import {
   runtimeStatePath,
 } from "./runtimePaths.js";
 import { resolveWorkspace } from "./workspaceResolver.js";
+import { runtimeSessionManager } from "./runtimeSessionManager.js";
 
 const workspaceRuntimeInstanceId =
   "workspace_runtime_" +
@@ -110,11 +111,37 @@ function staleSessionLeaseFromPreviousRuntime(
   );
 }
 
+function disconnectedSessionReclaimGraceMs(): number {
+  const configured = Number(process.env.WORKSPACE_SESSION_RECLAIM_GRACE_MS);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return Math.min(Math.trunc(configured), 60_000);
+  }
+  return 5_000;
+}
+
+function staleDisconnectedSessionLease(
+  lease: WorkspaceLeaseRecord,
+  now = Date.now(),
+): boolean {
+  if (lease.ownerTaskId || lease.pinnedProcessIds.length > 0) return false;
+  if (lease.runtimeInstanceId !== workspaceRuntimeInstanceId) return false;
+
+  const ownerSession = runtimeSessionManager.status(lease.ownerSessionId);
+  if (!ownerSession?.disconnectedAt || ownerSession.activeCalls > 0) {
+    return false;
+  }
+
+  const disconnectedAt = Date.parse(ownerSession.disconnectedAt);
+  if (!Number.isFinite(disconnectedAt)) return false;
+  return now >= disconnectedAt + disconnectedSessionReclaimGraceMs();
+}
+
 function expired(lease: WorkspaceLeaseRecord, now = Date.now()): boolean {
   return (
     lease.pinnedProcessIds.length === 0 &&
     (Date.parse(lease.expiresAt) <= now ||
-      staleSessionLeaseFromPreviousRuntime(lease))
+      staleSessionLeaseFromPreviousRuntime(lease) ||
+      staleDisconnectedSessionLease(lease, now))
   );
 }
 
@@ -622,6 +649,8 @@ export function getWorkspaceLeaseStorageInfo() {
     writeOwnershipOnly: true,
     readWhileWriteOwned: true,
     orphanSessionLeaseReclamation: true,
+    sameRuntimeDisconnectedSessionReclamation: true,
+    sessionReclaimGraceMs: disconnectedSessionReclaimGraceMs(),
     hierarchicalWorkspaceConflicts: true,
   };
 }

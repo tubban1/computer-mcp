@@ -44,6 +44,16 @@ export type PersistentLoop = {
   currentPhaseIndex: number;
   cycleCount: number;
   transitionCount: number;
+  /**
+   * Monotonic execution sequence for Primitive-backed phase attempts.
+   *
+   * Unlike transitionCount, this advances even when waitForChange keeps the
+   * loop on the same phase. It lets each normal poll execute a fresh Task while
+   * an interrupted attempt still reuses its persisted activeTaskId.
+   *
+   * Optional for backward compatibility with pre-v0.9.15 loop records.
+   */
+  taskSequence?: number;
   pollIntervalMs: number;
   nextRunAt: string | null;
   maxCycles?: number;

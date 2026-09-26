@@ -92,7 +92,7 @@ try {
 
   assert.equal(health.ok, true);
   assert.equal(health.service, "computer-mcp");
-  assert.equal(health.version, "0.9.14");
+  assert.equal(health.version, "0.9.15");
   assert.equal(health.runtime?.mode, "production");
   assert.equal(path.resolve(health.runtime?.stateRoot), path.resolve(stateRoot));
   assert.equal(path.resolve(health.runtime?.codeRoot), path.resolve(root));
@@ -105,11 +105,16 @@ try {
   assert.equal(health.capabilities?.workspaceHandoff, true);
   assert.equal(health.capabilities?.versionedStateSchema, true);
   assert.equal(health.capabilities?.stateMigrationRegistry, true);
+  assert.equal(health.capabilities?.crashRecoveryMatrix, true);
+  assert.equal(
+    health.capabilities?.sameRuntimeDisconnectedSessionReclamation,
+    true,
+  );
   assert.equal(health.runtime?.stateSchema?.schemaVersion, 0);
   assert.equal(health.runtime?.stateSchema?.readable, true);
   assert.equal(health.runtime?.stateSchema?.migrationRequired, true);
 
-  assert.match(stdout, /computer-mcp v0\.9\.14 listening/);
+  assert.match(stdout, /computer-mcp v0\.9\.15 listening/);
   assert.doesNotMatch(stdout, /tsx watch/);
 
   console.log(
@@ -127,6 +132,9 @@ try {
           health.capabilities.persistentProcessOwnership,
         runtimeSelfProtection: health.capabilities.runtimeSelfProtection,
         versionedStateSchema: health.capabilities.versionedStateSchema,
+        crashRecoveryMatrix: health.capabilities.crashRecoveryMatrix,
+        sameRuntimeDisconnectedSessionReclamation:
+          health.capabilities.sameRuntimeDisconnectedSessionReclamation,
         legacyStateReadable: health.runtime.stateSchema.readable,
       },
       null,

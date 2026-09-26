@@ -13,9 +13,11 @@ import {
   type WorkspaceLeaseRecord,
 } from "./workspaceLeaseManager.js";
 import { resolveWorkspace } from "./workspaceResolver.js";
+import { injectTestFault } from "./faultInjection.js";
 
 export type WorkspaceHandoffStatus =
   | "requested"
+  | "releasing"
   | "released"
   | "completed"
   | "cancelled";
@@ -161,6 +163,15 @@ function assertSourceLeaseMatches(
   }
 }
 
+function assertSourceCaller(record: WorkspaceHandoffRecord): void {
+  const context = currentExecutionContext();
+  if (executionOwnerKey(context) !== record.sourceOwnerKey) {
+    throw new Error(
+      "HANDOFF_NOT_OWNER: only the original workspace owner can confirm handoff.",
+    );
+  }
+}
+
 export async function approveWorkspaceHandoff(
   requestId: string,
   confirm: boolean,
@@ -168,38 +179,62 @@ export async function approveWorkspaceHandoff(
   if (!confirm) {
     throw new Error("Workspace handoff requires confirm=true.");
   }
+
   const record = await readWorkspaceHandoff(requestId);
-  if (record.status !== "requested") {
+  assertSourceCaller(record);
+
+  if (record.status === "released") {
+    return {
+      released: true,
+      recovered: true,
+      request: record,
+    };
+  }
+  if (record.status !== "requested" && record.status !== "releasing") {
     throw new Error(
       `Workspace handoff ${requestId} is already ${record.status}.`,
     );
   }
 
-  const status = await workspaceLeaseStatus(record.workspace);
-  assertSourceLeaseMatches(record, status.lease);
+  let status = await workspaceLeaseStatus(record.workspace);
 
-  const context = currentExecutionContext();
-  const sourceOwnedByCaller = status.lease?.ownerTaskId
-    ? context.taskId === status.lease.ownerTaskId
-    : context.sessionId === status.lease?.ownerSessionId;
-  if (!sourceOwnedByCaller) {
-    throw new Error(
-      "HANDOFF_NOT_OWNER: only the current workspace owner can confirm handoff.",
-    );
+  if (record.status === "requested") {
+    assertSourceLeaseMatches(record, status.lease);
+
+    if ((status.lease?.pinnedProcessIds.length ?? 0) > 0) {
+      throw new Error(
+        `HANDOFF_BLOCKED_BY_PROCESS: ${status.lease!.pinnedProcessIds.join(",")}`,
+      );
+    }
+
+    // Persist intent before releasing ownership. If the Runtime stops after
+    // this receipt, retry can safely continue from "releasing".
+    record.status = "releasing";
+    await writeRecord(record);
+    injectTestFault("handoff.after_releasing_receipt_before_release");
+    status = await workspaceLeaseStatus(record.workspace);
   }
 
-  if ((status.lease?.pinnedProcessIds.length ?? 0) > 0) {
-    throw new Error(
-      `HANDOFF_BLOCKED_BY_PROCESS: ${status.lease!.pinnedProcessIds.join(",")}`,
-    );
+  if (status.lease) {
+    assertSourceLeaseMatches(record, status.lease);
+    if ((status.lease.pinnedProcessIds.length ?? 0) > 0) {
+      throw new Error(
+        `HANDOFF_BLOCKED_BY_PROCESS: ${status.lease.pinnedProcessIds.join(",")}`,
+      );
+    }
+    await releaseWorkspaceLease(record.workspace, { force: true });
   }
 
-  await releaseWorkspaceLease(record.workspace, { force: true });
+  // A missing lease while the receipt says "releasing" means the release
+  // side effect committed before the Runtime could persist the next state.
+  injectTestFault("handoff.after_lease_release_before_released_receipt");
+
   record.status = "released";
-  record.releasedAt = new Date().toISOString();
+  record.releasedAt = record.releasedAt ?? new Date().toISOString();
   await writeRecord(record);
   return {
     released: true,
+    recovered: false,
     request: record,
   };
 }
@@ -211,17 +246,31 @@ export async function completeWorkspaceTakeover(
   if (!confirm) {
     throw new Error("Workspace takeover requires confirm=true.");
   }
-  const record = await readWorkspaceHandoff(requestId);
-  if (record.status !== "released") {
-    throw new Error(
-      `Workspace takeover ${requestId} requires released status; current status is ${record.status}.`,
-    );
-  }
 
+  const record = await readWorkspaceHandoff(requestId);
   const context = currentExecutionContext();
   if (executionOwnerKey(context) !== record.requesterOwnerKey) {
     throw new Error(
       "TAKEOVER_NOT_REQUESTER: only the original takeover requester can complete acquisition.",
+    );
+  }
+
+  if (record.status === "completed") {
+    const status = await workspaceLeaseStatus(record.workspace);
+    return {
+      completed: true,
+      recovered: true,
+      request: record,
+      lease:
+        status.lease?.id === record.acquiredLeaseId
+          ? status.lease
+          : null,
+    };
+  }
+
+  if (record.status !== "released") {
+    throw new Error(
+      `Workspace takeover ${requestId} requires released status; current status is ${record.status}.`,
     );
   }
 
@@ -231,13 +280,19 @@ export async function completeWorkspaceTakeover(
       `Takeover after handoff ${record.id}`,
     auto: false,
   });
+
+  // ensureWorkspaceWriteLease is idempotent for the same owner. A retry after
+  // this boundary renews/reuses the same lease and then commits the receipt.
+  injectTestFault("handoff.after_takeover_lease_before_completed_receipt");
+
   record.status = "completed";
-  record.completedAt = new Date().toISOString();
+  record.completedAt = record.completedAt ?? new Date().toISOString();
   record.acquiredLeaseId = lease.id;
   await writeRecord(record);
 
   return {
     completed: true,
+    recovered: false,
     request: record,
     lease,
   };
@@ -255,6 +310,11 @@ export async function cancelWorkspaceHandoff(
   }
   if (record.status === "completed") {
     throw new Error("Completed workspace handoffs cannot be cancelled.");
+  }
+  if (record.status === "releasing") {
+    throw new Error(
+      "HANDOFF_RELEASE_IN_PROGRESS: finish or recover the source release before cancellation.",
+    );
   }
   record.status = "cancelled";
   await writeRecord(record);

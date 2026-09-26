@@ -40,6 +40,7 @@ process.env.ALLOW_DELETE = "true";
 process.env.ALLOW_SHELL = "true";
 process.env.ALLOW_ROLLBACK = "true";
 process.env.WORKSPACE_LEASE_TTL_MS = "10000";
+process.env.WORKSPACE_SESSION_RECLAIM_GRACE_MS = "0";
 
 const { withExecutionContext } = await import(
   "../src/runtime/executionContext.js"
@@ -79,8 +80,14 @@ const sessionB = {
   requestId: "request-B",
   origin: "mcp" as const,
 };
+const sessionC = {
+  sessionId: "session-concurrency-C",
+  requestId: "request-C",
+  origin: "mcp" as const,
+};
 runtimeSessionManager.register(sessionA.sessionId);
 runtimeSessionManager.register(sessionB.sessionId);
+runtimeSessionManager.register(sessionC.sessionId);
 
 const fileA = path.join(repoA, "a.txt");
 const fileB = path.join(repoB, "b.txt");
@@ -110,7 +117,7 @@ try {
 
   // Sibling repositories can run shell work concurrently.
   const siblingStarted = Date.now();
-  await Promise.all([
+  const [siblingAResult, siblingBResult] = await Promise.all([
     withExecutionContext(sessionA, async () =>
       await executeRoutedAction("shell.exec", {
         command: "sleep 1.2",
@@ -130,8 +137,9 @@ try {
   ]);
   const siblingWallMs = Date.now() - siblingStarted;
   assert.ok(
-    siblingWallMs < 2200,
-    `sibling repositories were unexpectedly serialized: ${siblingWallMs}ms`,
+    siblingAResult.resourceWaitMs < 500 &&
+      siblingBResult.resourceWaitMs < 500,
+    `sibling repositories unexpectedly waited on AgentOS resources: A=${siblingAResult.resourceWaitMs}ms B=${siblingBResult.resourceWaitMs}ms wall=${siblingWallMs}ms`,
   );
 
   // Parent/child workspaces are hierarchically conflicting. A broad shell
@@ -298,6 +306,25 @@ try {
   await fs.writeFile(leasePath, JSON.stringify(rawLease, null, 2) + "\n");
   assert.equal((await workspaceLeaseStatus(repoB)).busy, false);
 
+  // A session-only lease is also reclaimable inside the same Runtime after the
+  // owning transport disconnects and the short reconnect grace window passes.
+  const disconnectedLease = await withExecutionContext(sessionC, async () =>
+    await ensureWorkspaceWriteLease(repoB, {
+      purpose: "same-runtime disconnected session lease",
+    }),
+  );
+  assert.equal(disconnectedLease.ownerSessionId, sessionC.sessionId);
+  runtimeSessionManager.disconnect(sessionC.sessionId);
+  const reclaimed = await withExecutionContext(sessionB, async () =>
+    await ensureWorkspaceWriteLease(repoB, {
+      purpose: "reclaimed after transport reconnect",
+    }),
+  );
+  assert.equal(reclaimed.ownerSessionId, sessionB.sessionId);
+  await withExecutionContext(sessionB, async () =>
+    await releaseWorkspaceLease(repoB),
+  );
+
   // batch_edit_files composes multiple edits against the same in-memory file.
   await fs.writeFile(batchFile, "alpha beta gamma\n");
   const batch = await batchEditFiles([
@@ -360,6 +387,7 @@ try {
         disconnectedProcessClaim: true,
         processExitReleasesLease: true,
         orphanSessionLeaseReclamation: true,
+        sameRuntimeDisconnectedSessionReclamation: true,
         transactionOwnershipTransportIndependent: true,
         sameFileBatchEditsCompose: true,
         runtimeSelfProductionGuard: true,

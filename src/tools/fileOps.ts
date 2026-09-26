@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { injectTestFault } from "../runtime/faultInjection.js";
 import {
   assertAllowedExistingPath,
   assertAllowedTargetPath,
@@ -7,6 +9,56 @@ import {
 import { requireCapability } from "../security/capabilities.js";
 
 const DEFAULT_MAX_RESULTS = 200;
+
+async function atomicReplaceText(
+  target: string,
+  content: string,
+  options?: { mustNotExist?: boolean },
+): Promise<void> {
+  const directory = path.dirname(target);
+  let existingMode: number | undefined;
+  try {
+    existingMode = (await fs.stat(target)).mode & 0o777;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const temp = path.join(
+    directory,
+    `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+
+  try {
+    await fs.writeFile(temp, content, {
+      encoding: "utf8",
+      mode: existingMode ?? 0o666,
+      flag: "wx",
+    });
+
+    injectTestFault("filesystem.after_temp_before_commit");
+
+    if (options?.mustNotExist) {
+      try {
+        await fs.link(temp, target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error("File already exists and overwrite=false.");
+        }
+        throw error;
+      }
+      await fs.rm(temp, { force: true });
+    } else {
+      await fs.rename(temp, target);
+    }
+
+    if (existingMode !== undefined) {
+      await fs.chmod(target, existingMode).catch(() => undefined);
+    }
+  } finally {
+    await fs.rm(temp, { force: true }).catch(() => undefined);
+  }
+}
+
 
 export async function getFileInfo(inputPath: string) {
   const safePath = await assertAllowedExistingPath(inputPath);
@@ -78,16 +130,9 @@ export async function writeFile(
     await fs.mkdir(path.dirname(safePath), { recursive: true });
   }
 
-  if (!overwrite) {
-    try {
-      await fs.access(safePath);
-      throw new Error("File already exists and overwrite=false.");
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("overwrite=false")) throw error;
-    }
-  }
-
-  await fs.writeFile(safePath, content, { encoding: "utf8" });
+  await atomicReplaceText(safePath, content, {
+    mustNotExist: !overwrite,
+  });
   return { path: safePath, bytes: Buffer.byteLength(content, "utf8") };
 }
 
@@ -124,7 +169,7 @@ export async function editFile(
     updated = original.replace(oldText, newText);
   }
 
-  await fs.writeFile(safePath, updated, "utf8");
+  await atomicReplaceText(safePath, updated);
   return { path: safePath, replacements };
 }
 
@@ -295,7 +340,7 @@ export async function batchEditFiles(
 
   for (const [filePath, state] of files) {
     if (state.updated !== state.original) {
-      await fs.writeFile(filePath, state.updated, "utf8");
+      await atomicReplaceText(filePath, state.updated);
     }
   }
 

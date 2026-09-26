@@ -14,7 +14,7 @@ Browser-agent and WeChat adapters persist `pendingSend` before the external side
 
 ## Workspace ownership
 
-Session-only orphan leases from an older Runtime instance can be reclaimed when they have no Task owner and no pinned process.
+Session-only orphan leases from an older Runtime instance can be reclaimed when they have no Task owner and no pinned process. v0.9.15 also reclaims a session-only lease inside the same Runtime after the owning MCP transport is explicitly disconnected, the short reconnect grace period has elapsed, and no durable Task/process pin exists.
 
 Task/Process/Transaction ownership survives transport reconnects.
 
@@ -28,6 +28,14 @@ Production installation health-checks the new immutable release. If it fails, th
 
 Persistent state is not automatically rolled back with code.
 
-## 1.0 work remaining
+## Fault recovery matrix
 
-The v1.0 roadmap requires a documented fault-injection matrix covering crashes during file mutation, Git transactions, scheduler/loop execution, external sends, memory promotion, and ownership handoff.
+v0.9.15 adds deterministic test-only fault injection and replay-safe recovery across filesystem mutation, scheduler/loop occurrence creation, semantic promotion, workspace handoff, and Git transaction cleanup.
+
+Existing managed-process, browser-session, WeChat-session, and durable-state migration recovery verifiers are combined with those crash-window tests by:
+
+```bash
+npm run verify:recovery-matrix
+```
+
+See [Fault recovery matrix](fault-recovery.md).

@@ -23,6 +23,7 @@ import {
   type PersistentLoop,
 } from "./loopStore.js";
 import { runtimeLifecycle } from "./runtimeLifecycle.js";
+import { injectTestFault } from "./faultInjection.js";
 
 type CreateLoopInput = {
   label: string;
@@ -304,6 +305,7 @@ export async function createPersistentLoop(input: CreateLoopInput) {
     currentPhaseIndex: 0,
     cycleCount: 0,
     transitionCount: 0,
+    taskSequence: 0,
     pollIntervalMs: Math.min(
       Math.max(Math.trunc(input.pollIntervalMs ?? 5_000), 1_000),
       10 * 60_000,
@@ -347,6 +349,44 @@ function advance(loop: PersistentLoop, output: unknown, phase: LoopPhase): void 
     loop.currentPhaseIndex = 0;
     loop.cycleCount += 1;
   }
+}
+
+function loopPhaseTaskId(
+  loop: PersistentLoop,
+  phase: LoopPhase,
+): string {
+  const occurrence = [
+    loop.id,
+    phase.id,
+    String(loop.transitionCount),
+    String(loop.taskSequence ?? 0),
+  ].join("\n");
+  const digest = createHash("sha256").update(occurrence).digest("hex").slice(0, 32);
+  return `task_loop_${digest}`;
+}
+
+async function ensureLoopTask(
+  loop: PersistentLoop,
+  phase: LoopPhase,
+  taskId: string,
+): Promise<void> {
+  try {
+    await getPersistentTaskStatus(taskId, false);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const steps = instantiatePhaseSteps(phase, loop);
+  await createPersistentPrimitiveTask(
+    `${loop.label} / ${phase.label ?? phase.id}`,
+    steps,
+    {
+      maxConcurrency: loop.taskRuntime.maxConcurrency,
+      failFast: loop.taskRuntime.failFast,
+      taskId,
+    },
+  );
 }
 
 async function executeLoop(loopId: string): Promise<void> {
@@ -430,22 +470,21 @@ async function executeLoop(loopId: string): Promise<void> {
     let taskId = loop.activeTaskId;
 
     if (!taskId) {
-      const steps = instantiatePhaseSteps(phase, loop);
-      const created = await createPersistentPrimitiveTask(
-        `${loop.label} / ${phase.label ?? phase.id}`,
-        steps,
-        {
-          maxConcurrency: loop.taskRuntime.maxConcurrency,
-          failFast: loop.taskRuntime.failFast,
-        },
-      );
-      taskId = created.id;
+      taskId = loopPhaseTaskId(loop, phase);
       loop.activeTaskId = taskId;
       loop.lastTaskId = taskId;
-      loop.lastTaskStatus = created.status;
+      loop.lastTaskStatus = "pending";
       loop.lastError = undefined;
+      loop.taskSequence = (loop.taskSequence ?? 0) + 1;
+
+      // Persist the exact attempt identity before creating/executing its Task.
+      // A crash retries activeTaskId; a normal waitForChange poll gets the next
+      // taskSequence and therefore performs a fresh observation.
       await writeLoop(loop);
+      injectTestFault("loop.after_phase_receipt_before_task");
     }
+
+    await ensureLoopTask(loop, phase, taskId);
 
     try {
       const run = await runPersistentTask(taskId, {

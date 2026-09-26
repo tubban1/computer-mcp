@@ -27,6 +27,8 @@ Use this checklist for release candidates and stable releases.
 - [ ] Drain/handoff verifier
 - [ ] Upgrade Runtime verifier
 - [ ] State schema verifier
+- [ ] Fault recovery verifier
+- [ ] Recovery matrix verifier
 - [ ] Production Runtime verifier
 
 ## Production

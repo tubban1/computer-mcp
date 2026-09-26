@@ -423,12 +423,16 @@ export function validatePrimitiveTaskSteps(
 export async function createPersistentPrimitiveTask(
   label: string,
   steps: PrimitiveTaskStep[],
-  options?: { maxConcurrency?: number; failFast?: boolean },
+  options?: {
+    maxConcurrency?: number;
+    failFast?: boolean;
+    taskId?: string;
+  },
 ) {
   const plan = validatePrimitiveTaskSteps(steps);
 
   const now = new Date().toISOString();
-  const id = newTaskId();
+  const id = options?.taskId ?? newTaskId();
   const stage = await ensureTaskStage(id);
 
   const task: PersistentTask = {
