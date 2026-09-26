@@ -116,6 +116,8 @@ Initial reusable Skills:
 
 - `wechat.read`
 - `wechat.copy_selected`
+- `wechat.copy_at`
+- `wechat.read_points`
 - `wechat.send`
 - `xhs.publish`
 - `email.compose`
@@ -212,25 +214,27 @@ These capabilities are available through the Primitive ABI and routed actions, s
 
 ### macOS permissions
 
-Desktop Perception requires macOS permissions for the process that launches computer-mcp, normally Terminal:
+v0.9.2+ uses the standalone `Computer MCP Helper.app` for Accessibility and Screen Recording. Grant permissions to the Helper rather than to whichever IDE or Terminal launched computer-mcp:
 
 ```text
 System Settings
 → Privacy & Security
 → Accessibility
+→ Computer MCP Helper
 ```
 
-Enable the relevant Terminal/launcher application.
-
-Screenshots may additionally require:
+and:
 
 ```text
 System Settings
 → Privacy & Security
-→ Screen Recording
+→ Screen & System Audio Recording
+→ Computer MCP Helper
 ```
 
-If Accessibility is unavailable, `desktop_frontmost_app` may still work while deep `ui.query tree/find` calls fail.
+With `MACOS_HELPER_MODE=required`, GUI operations fail instead of silently falling back to the launcher process when the Helper is unavailable.
+
+The direct `desktop_screenshot` MCP tool now also returns a compressed inline JPEG preview (max dimension 1280) while preserving the full-resolution screenshot at the requested path. This lets a vision-capable model inspect the Mac screen directly without routing the image through a second remote-desktop product.
 
 ## Headless browser per task
 
@@ -290,9 +294,25 @@ Example:
 
 ### Read
 
-`wechat.read` uses a clipboard-first fast path. It focuses WeChat, tries Cmd+C on the current selection, captures copied text, restores the previous full pasteboard, then falls back to the Accessibility tree and optional screenshot perception when no selection is copied.
+`wechat.read` uses a clipboard-first fast path. It focuses WeChat by bundle identifier, tries Cmd+C on the current selection, captures copied text, restores the previous full pasteboard, then falls back to Accessibility and optional screenshot perception when no selection is copied.
 
-`wechat.copy_selected` is the explicit fast path when the user or another primitive has selected one or more messages. If WeChat exposes no selectable text, Accessibility and screenshot perception remain the fallback.
+`wechat.copy_selected` is the explicit fast path when text is already selected.
+
+`wechat.copy_at` is designed for visual-model workflows: inspect a recent desktop screenshot, choose a visible text-message coordinate, triple-click it, copy the exact message text through the clipboard, and restore the prior clipboard.
+
+`wechat.read_points` batches the same pattern for up to 20 screenshot-derived points, deduplicates repeated captures, and returns exact clipboard text for each point.
+
+On current WeChat for macOS, the main message list is mostly custom-rendered and exposes very little through Accessibility. The working perception order is therefore:
+
+```text
+Screenshot / vision → choose message coordinates
+                  ↓
+            triple-click
+                  ↓
+             Clipboard
+                  ↓
+          exact message text
+```
 
 ### Send
 
@@ -549,7 +569,7 @@ A successful v0.9 tunnel probe should report:
 
 ```text
 server_name=computer-mcp
-server_version=0.9.2
+server_version=0.9.3
 ```
 
 ## Current boundaries
@@ -589,7 +609,7 @@ The stable `clipboard` Primitive now supports:
 - `wait_change`
 - `copy_selection`
 
-Clipboard snapshots are short-lived in-memory tokens. v0.9.2 captures every pasteboard item/type as binary data and restores it with full fidelity up to a 16 MiB safety cap, including rich text, URLs, images, and application-specific clipboard flavors. If a clipboard exceeds the cap, automatic copy/paste mutation refuses to overwrite it.
+Clipboard snapshots are short-lived in-memory tokens. v0.9.1 captures every pasteboard item/type as binary data and restores it with full fidelity up to a 16 MiB safety cap, including rich text, URLs, images, and application-specific clipboard flavors. If a clipboard exceeds the cap, automatic copy/paste mutation refuses to overwrite it.
 
 `desktop.type` now snapshots and restores the full macOS pasteboard by default.
 
@@ -647,3 +667,45 @@ primitive_call("app.lifecycle", "request_permissions")
 ```
 
 The helper currently owns native Accessibility actions, keyboard/mouse input, app/window inspection, UI-tree reads, and screenshot execution. Clipboard state remains managed by the v0.9.1 full-fidelity clipboard transaction layer.
+
+
+## v0.9.3 — Visual + Clipboard WeChat Perception
+
+v0.9.3 closes the loop between vision and exact text extraction on macOS.
+
+The direct `desktop_screenshot` tool now returns two things at once:
+
+- the full-resolution screenshot saved at the requested local path
+- a compressed inline JPEG preview (max dimension 1280) that a vision-capable model can inspect directly
+
+For WeChat, this matters because current macOS WeChat exposes very little of the chat body through Accessibility. In testing, the working pattern is:
+
+```text
+desktop_screenshot
+→ model sees visible message bubbles
+→ choose macOS screen coordinates
+→ rapid triple-click
+→ Cmd+C
+→ clipboard.wait_change
+→ exact original text
+→ restore user's previous clipboard
+```
+
+New Skills:
+
+- `wechat.copy_at` — capture one visible text message from a screenshot-derived coordinate
+- `wechat.read_points` — capture up to 20 visible message coordinates in one Skill run and deduplicate repeated results
+
+The default click count is 3 because WeChat triple-click selects the whole text message, while a double-click generally selects only one word.
+
+The WeChat Skills now target the stable bundle identifier:
+
+```text
+com.tencent.xinWeChat
+```
+
+instead of relying on the localized application display name.
+
+Clipboard copy detection is also stricter: a clipboard change containing zero text is no longer reported as a successful text capture.
+
+Finally, `desktop_frontmost_app` now prefers a read-only NSWorkspace query before the AX fallback. This avoids a focused-application edge case in the native Helper while still keeping all consequential desktop input and screenshot operations behind `Computer MCP Helper.app`.

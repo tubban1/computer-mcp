@@ -46,6 +46,14 @@ function optionalBoolean(args: JsonObject, key: string, fallback: boolean): bool
   return typeof value === "boolean" ? value : fallback;
 }
 
+function requiredNumber(args: JsonObject, key: string): number {
+  const value = args[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Missing required numeric skill argument "${key}".`);
+  }
+  return value;
+}
+
 function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
@@ -85,6 +93,19 @@ const WECHAT_READ_CONTRACT: SkillContract = {
   resources: [
     { key: "desktop.focus", mode: "exclusive" },
     { key: "desktop.accessibility", mode: "shared" },
+  ],
+};
+
+const WECHAT_COPY_AT_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: true,
+  sideEffects: ["window_focus", "ui_selection", "clipboard_capture"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [
+    { key: "desktop.focus", mode: "exclusive" },
+    { key: "desktop.input", mode: "exclusive" },
+    { key: "desktop.clipboard", mode: "exclusive" },
   ],
 };
 
@@ -145,7 +166,7 @@ const skills: SkillDefinition[] = [
     },
     dryRunPlan: (args) => ({
       steps: [
-        { action: "desktop.open_app", args: { app_name: "WeChat" } },
+        { action: "desktop.open_app", args: { app_name: "com.tencent.xinWeChat" } },
         ...(optionalBoolean(args, "clipboard_first", true)
           ? [
               {
@@ -161,13 +182,13 @@ const skills: SkillDefinition[] = [
           ? [
               {
                 action: "desktop.ui_tree",
-                args: { app_name: "WeChat", max_elements: args.max_elements ?? 700 },
+                args: { app_name: "com.tencent.xinWeChat", max_elements: args.max_elements ?? 700 },
               },
             ]
           : []),
         ...(typeof args.screenshot_path === "string"
           ? [
-              { action: "desktop.window_bounds", args: { app_name: "WeChat" } },
+              { action: "desktop.window_bounds", args: { app_name: "com.tencent.xinWeChat" } },
               { action: "desktop.screenshot_region", args: "derived from window bounds" },
             ]
           : []),
@@ -175,7 +196,7 @@ const skills: SkillDefinition[] = [
     }),
     run: async (args) =>
       await withSkillResources("wechat.read", WECHAT_READ_CONTRACT, async (held) => {
-        await call("desktop.open_app", { app_name: "WeChat" }, held);
+        await call("desktop.open_app", { app_name: "com.tencent.xinWeChat" }, held);
         await sleep(350);
 
         let clipboard: any = null;
@@ -227,7 +248,7 @@ const skills: SkillDefinition[] = [
           tree = (await call(
             "desktop.ui_tree",
             {
-              app_name: "WeChat",
+              app_name: "com.tencent.xinWeChat",
               max_elements:
                 typeof args.max_elements === "number" ? args.max_elements : 700,
             },
@@ -239,7 +260,7 @@ const skills: SkillDefinition[] = [
         if (typeof args.screenshot_path === "string" && args.screenshot_path.trim()) {
           const bounds = (await call(
             "desktop.window_bounds",
-            { app_name: "WeChat" },
+            { app_name: "com.tencent.xinWeChat" },
             held,
           )) as any;
           screenshot = await call(
@@ -301,7 +322,7 @@ const skills: SkillDefinition[] = [
     },
     dryRunPlan: (args) => ({
       steps: [
-        { action: "desktop.open_app", args: { app_name: "WeChat" } },
+        { action: "desktop.open_app", args: { app_name: "com.tencent.xinWeChat" } },
         {
           action: "desktop.clipboard_copy_selection",
           args: { timeout_ms: args.timeout_ms ?? 1500, restore: true },
@@ -325,7 +346,7 @@ const skills: SkillDefinition[] = [
         "wechat.copy_selected",
         contract,
         async (held) => {
-          await call("desktop.open_app", { app_name: "WeChat" }, held);
+          await call("desktop.open_app", { app_name: "com.tencent.xinWeChat" }, held);
           await sleep(250);
           return await call(
             "desktop.clipboard_copy_selection",
@@ -336,6 +357,247 @@ const skills: SkillDefinition[] = [
             },
             held,
           );
+        },
+      );
+    },
+  },
+  {
+    id: "wechat.copy_at",
+    domain: "communication",
+    description:
+      "Click a visible WeChat text message multiple times (triple-click by default), copy its exact text through the clipboard, and restore the user's previous clipboard.",
+    keywords: ["wechat", "微信", "复制", "clipboard", "visible message", "坐标"],
+    contract: WECHAT_COPY_AT_CONTRACT,
+    inputs: {
+      x: "macOS logical screen X coordinate for a visible text message.",
+      y: "macOS logical screen Y coordinate for a visible text message.",
+      timeout_ms: "Clipboard copy timeout in milliseconds; default 1500.",
+      click_count: "Number of rapid clicks before copy; default 3 because WeChat triple-click selects the whole text message.",
+      click_interval_ms: "Delay between rapid clicks; default 80 ms.",
+    },
+    dryRunPlan: (args) => ({
+      steps: [
+        {
+          action: "desktop.open_app",
+          args: { app_name: "com.tencent.xinWeChat" },
+        },
+        {
+          action: "desktop.click",
+          args: {
+            x: args.x,
+            y: args.y,
+            repeat: args.click_count ?? 3,
+            interval_ms: args.click_interval_ms ?? 80,
+          },
+        },
+        {
+          action: "desktop.clipboard_copy_selection",
+          args: { timeout_ms: args.timeout_ms ?? 1500, restore: true },
+        },
+      ],
+    }),
+    run: async (args) => {
+      const x = requiredNumber(args, "x");
+      const y = requiredNumber(args, "y");
+      const clickCount =
+        typeof args.click_count === "number"
+          ? Math.min(Math.max(Math.trunc(args.click_count), 1), 4)
+          : 3;
+      const clickIntervalMs =
+        typeof args.click_interval_ms === "number"
+          ? Math.min(Math.max(args.click_interval_ms, 20), 500)
+          : 80;
+      const timeoutMs =
+        typeof args.timeout_ms === "number"
+          ? Math.min(Math.max(args.timeout_ms, 100), 30_000)
+          : 1500;
+
+      return await withSkillResources(
+        "wechat.copy_at",
+        WECHAT_COPY_AT_CONTRACT,
+        async (held) => {
+          await call(
+            "desktop.open_app",
+            { app_name: "com.tencent.xinWeChat" },
+            held,
+          );
+          await sleep(250);
+
+          for (let index = 0; index < clickCount; index += 1) {
+            await call("desktop.click", { x, y }, held);
+            if (index + 1 < clickCount) await sleep(clickIntervalMs);
+          }
+          await sleep(120);
+
+          const clipboard = await call(
+            "desktop.clipboard_copy_selection",
+            { timeout_ms: timeoutMs, restore: true },
+            held,
+          );
+
+          return {
+            x,
+            y,
+            clickCount,
+            clickIntervalMs,
+            clipboard,
+            note:
+              "This Skill is designed for visual-model workflows: inspect a desktop screenshot, choose a visible text-message coordinate, then call wechat.copy_at to obtain exact clipboard text.",
+          };
+        },
+      );
+    },
+  },
+  {
+    id: "wechat.read_points",
+    domain: "communication",
+    description:
+      "Read multiple visible WeChat text messages from screenshot-derived macOS screen coordinates using triple-click plus clipboard capture.",
+    keywords: [
+      "wechat",
+      "微信",
+      "读取消息",
+      "visible messages",
+      "clipboard",
+      "screenshot coordinates",
+    ],
+    contract: WECHAT_COPY_AT_CONTRACT,
+    inputs: {
+      points:
+        "Array of up to 20 macOS logical screen coordinate objects: [{x,y}, ...].",
+      timeout_ms: "Clipboard copy timeout per point; default 1500.",
+      click_count:
+        "Rapid clicks per point; default 3 because WeChat triple-click selects the whole message text.",
+      click_interval_ms: "Delay between rapid clicks; default 80 ms.",
+    },
+    dryRunPlan: (args) => ({
+      steps: [
+        {
+          action: "desktop.open_app",
+          args: { app_name: "com.tencent.xinWeChat" },
+        },
+        {
+          action: "repeat",
+          points: Array.isArray(args.points) ? args.points : [],
+          perPoint: [
+            "rapid click message coordinate",
+            "Cmd+C",
+            "read clipboard",
+            "restore prior clipboard",
+          ],
+        },
+      ],
+    }),
+    run: async (args) => {
+      const rawPoints = Array.isArray(args.points) ? args.points : [];
+      const points = rawPoints
+        .slice(0, 20)
+        .map((point, index) => {
+          if (!point || typeof point !== "object") {
+            throw new Error(`Invalid WeChat point at index ${index}.`);
+          }
+          const value = point as Record<string, unknown>;
+          const x = value.x;
+          const y = value.y;
+          if (
+            typeof x !== "number" ||
+            !Number.isFinite(x) ||
+            typeof y !== "number" ||
+            !Number.isFinite(y)
+          ) {
+            throw new Error(
+              `WeChat point ${index} must contain finite numeric x/y values.`,
+            );
+          }
+          return { x, y };
+        });
+
+      if (points.length === 0) {
+        throw new Error("wechat.read_points requires at least one coordinate.");
+      }
+
+      const clickCount =
+        typeof args.click_count === "number"
+          ? Math.min(Math.max(Math.trunc(args.click_count), 1), 4)
+          : 3;
+      const clickIntervalMs =
+        typeof args.click_interval_ms === "number"
+          ? Math.min(Math.max(args.click_interval_ms, 20), 500)
+          : 80;
+      const timeoutMs =
+        typeof args.timeout_ms === "number"
+          ? Math.min(Math.max(args.timeout_ms, 100), 30_000)
+          : 1500;
+
+      return await withSkillResources(
+        "wechat.read_points",
+        WECHAT_COPY_AT_CONTRACT,
+        async (held) => {
+          await call(
+            "desktop.open_app",
+            { app_name: "com.tencent.xinWeChat" },
+            held,
+          );
+          await sleep(250);
+
+          const results: Array<Record<string, unknown>> = [];
+          const seen = new Set<string>();
+
+          for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+            const point = points[pointIndex]!;
+            try {
+              for (let index = 0; index < clickCount; index += 1) {
+                await call("desktop.click", point, held);
+                if (index + 1 < clickCount) await sleep(clickIntervalMs);
+              }
+              await sleep(120);
+
+              const clipboard = (await call(
+                "desktop.clipboard_copy_selection",
+                { timeout_ms: timeoutMs, restore: true },
+                held,
+              )) as any;
+
+              const text =
+                clipboard?.copied && typeof clipboard?.text === "string"
+                  ? clipboard.text.trim()
+                  : "";
+
+              const duplicate = Boolean(text && seen.has(text));
+              if (text) seen.add(text);
+
+              results.push({
+                pointIndex,
+                ...point,
+                copied: Boolean(text),
+                duplicate,
+                text: text || null,
+                characters: text.length,
+                reason: text ? null : clipboard?.reason ?? "No text copied.",
+              });
+            } catch (error) {
+              results.push({
+                pointIndex,
+                ...point,
+                copied: false,
+                duplicate: false,
+                text: null,
+                characters: 0,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
+          return {
+            requested: points.length,
+            copied: results.filter((item) => item.copied).length,
+            uniqueTexts: [...seen],
+            results,
+            clickCount,
+            clickIntervalMs,
+            note:
+              "Coordinates should come from a recent desktop screenshot. The Skill restores the user's prior clipboard after every message capture.",
+          };
         },
       );
     },
@@ -370,7 +632,7 @@ const skills: SkillDefinition[] = [
       const shouldSend = optionalBoolean(args, "send", false);
 
       return await withSkillResources("wechat.send", WECHAT_SEND_CONTRACT, async (held) => {
-        await call("desktop.open_app", { app_name: "WeChat" }, held);
+        await call("desktop.open_app", { app_name: "com.tencent.xinWeChat" }, held);
         await sleep(300);
         await call(
           "desktop.key",
@@ -391,13 +653,13 @@ const skills: SkillDefinition[] = [
 
         const bounds = (await call(
           "desktop.window_bounds",
-          { app_name: "WeChat" },
+          { app_name: "com.tencent.xinWeChat" },
           held,
         )) as any;
         const verification = (await call(
           "desktop.ui_find",
           {
-            app_name: "WeChat",
+            app_name: "com.tencent.xinWeChat",
             query: contactName,
             max_results: 30,
             max_elements: 800,

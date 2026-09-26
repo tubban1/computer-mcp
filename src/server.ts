@@ -1,5 +1,10 @@
 import "dotenv/config";
 import express from "express";
+import nodeFs from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import path from "node:path";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -136,10 +141,92 @@ function fail(error: unknown) {
   };
 }
 
+
+const execFileAsync = promisify(execFile);
+
+async function imagePreview(
+  filePath: string,
+): Promise<{ data: Buffer; mimeType: string; previewPath: string }> {
+  const previewPath = path.join(
+    os.tmpdir(),
+    `computer-mcp-preview-${randomUUID()}.jpg`,
+  );
+
+  try {
+    await execFileAsync("/usr/bin/sips", [
+      "-s",
+      "format",
+      "jpeg",
+      "-s",
+      "formatOptions",
+      "58",
+      "-Z",
+      "1280",
+      filePath,
+      "--out",
+      previewPath,
+    ]);
+    return {
+      data: await nodeFs.readFile(previewPath),
+      mimeType: "image/jpeg",
+      previewPath,
+    };
+  } catch {
+    return {
+      data: await nodeFs.readFile(filePath),
+      mimeType: "image/png",
+      previewPath: "",
+    };
+  }
+}
+
+async function okImageFile(
+  filePath: string,
+  metadata: unknown,
+) {
+  const preview = await imagePreview(filePath);
+  try {
+    recordAudit("success");
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text:
+            typeof metadata === "string"
+              ? metadata
+              : JSON.stringify(
+                  {
+                    ...(metadata && typeof metadata === "object"
+                      ? metadata
+                      : { value: metadata }),
+                    inlinePreview: {
+                      mimeType: preview.mimeType,
+                      bytes: preview.data.length,
+                      maxDimension: 1280,
+                    },
+                  },
+                  null,
+                  2,
+                ),
+        },
+        {
+          type: "image" as const,
+          data: preview.data.toString("base64"),
+          mimeType: preview.mimeType,
+        },
+      ],
+    };
+  } finally {
+    if (preview.previewPath) {
+      await nodeFs.rm(preview.previewPath, { force: true }).catch(() => undefined);
+    }
+  }
+}
+
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.2",
+    version: "0.9.3",
   });
 
   server.tool(
@@ -804,7 +891,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.2",
+          version: "0.9.3",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -1342,7 +1429,8 @@ function createServer() {
     },
     async ({ path }) => {
       try {
-        return ok(await desktopProvider.screenshot(path));
+        const result = await desktopProvider.screenshot(path);
+        return await okImageFile(result.path, result);
       } catch (error) {
         return fail(error);
       }
@@ -1888,7 +1976,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.2",
+    version: "0.9.3",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1911,5 +1999,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.9.2 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.3 listening on http://127.0.0.1:${port}/mcp`);
 });

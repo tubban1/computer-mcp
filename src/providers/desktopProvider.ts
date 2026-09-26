@@ -408,6 +408,27 @@ class DesktopProvider implements ComputerProvider {
 
   async frontmostApp() {
     requireDesktopEnabled();
+
+    // NSWorkspace can report the foreground app without Accessibility/TCC.
+    // Prefer it so helperMode=required does not depend on AX focused-app behavior.
+    try {
+      const raw = await jxa(
+        'ObjC.import("AppKit"); var app=$.NSWorkspace.sharedWorkspace.frontmostApplication; JSON.stringify({app:ObjC.unwrap(app.localizedName),bundleIdentifier:ObjC.unwrap(app.bundleIdentifier)})',
+      );
+      const parsed = JSON.parse(raw) as {
+        app?: string;
+        bundleIdentifier?: string;
+      };
+      if (parsed.app) {
+        return {
+          app: parsed.app,
+          bundleIdentifier: parsed.bundleIdentifier ?? "",
+        };
+      }
+    } catch {
+      // Fall through to the native helper / legacy compatibility path.
+    }
+
     return await helperOrFallback(
       "frontmost_app",
       {},
@@ -890,14 +911,24 @@ class DesktopProvider implements ComputerProvider {
       restored = true;
     }
 
+    const copiedText =
+      changed.changed &&
+      typeof changed.text === "string" &&
+      changed.text.length > 0;
+
     return {
-      copied: changed.changed,
+      copied: copiedText,
+      clipboardChanged: changed.changed,
       restored,
-      text: changed.changed ? changed.text : null,
-      characters: changed.characters,
+      text: copiedText ? changed.text : null,
+      characters: copiedText ? changed.characters : 0,
       elapsedMs: changed.elapsedMs,
       clipboardTypes: changed.types,
-      reason: changed.changed ? null : "Clipboard did not change after Cmd+C.",
+      reason: !changed.changed
+        ? "Clipboard did not change after Cmd+C."
+        : copiedText
+          ? null
+          : "Clipboard changed after Cmd+C but contained no text.",
     };
   }
 
