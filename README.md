@@ -123,7 +123,7 @@ For a batch:
 computer_batch(..., dry_run=true)
 ```
 
-Dry-run mode validates action names, provider routing, argument schemas, and batch references without executing side effects.
+Dry-run mode validates action names, provider routing, and argument schemas without executing side effects. References that depend on runtime results (for example `{"$ref":"tx.id"}`) are resolved during real execution rather than dry-run.
 
 ## Error behavior
 
