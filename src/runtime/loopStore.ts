@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -75,14 +76,14 @@ type EncryptedEnvelope = {
 function loopDir(): string {
   return (
     process.env.LOOP_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "loops")
+    runtimeStatePath("loops")
   );
 }
 
 function loopKeyPath(): string {
   return (
     process.env.LOOP_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "loop.key")
+    runtimeStatePath("loop.key")
   );
 }
 

@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtime/runtimePaths.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -16,7 +17,7 @@ export interface AuditEntry {
 }
 
 function auditPath(): string {
-  return process.env.AUDIT_LOG_PATH?.trim() || path.join(os.homedir(), ".computer-mcp", "audit.jsonl");
+  return process.env.AUDIT_LOG_PATH?.trim() || runtimeStatePath("audit.jsonl");
 }
 
 function summarizeSecretLike(value: unknown) {

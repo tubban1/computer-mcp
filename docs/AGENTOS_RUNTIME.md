@@ -321,3 +321,49 @@ The Runtime also adds a durable WeChat Session Endpoint. Background CGWindow cap
 Browser-agent and WeChat bindings now share the Session Endpoint abstraction used by Persistent Loop. Session phases support `identify`, `probe`, `capture_latest` and `send`.
 
 See `docs/EMBEDDING_PROVIDER.md` and `docs/WECHAT_SESSION_ADAPTER.md`.
+
+
+### v0.9.11 — Concurrency Ownership & Production Runtime
+
+v0.9.11 hardens AgentOS Runtime for concurrent ChatGPT sessions and long-lived production use.
+
+The central ownership change is that a raw MCP transport session is no longer treated as the durable identity of complex work. Transport sessions may rotate while one visible ChatGPT conversation continues.
+
+Runtime ownership is now split by lifetime:
+
+- ordinary routed actions use short-lived Resource Arbiter workspace locks
+- Persistent Tasks own workspaces as `task:<taskId>`
+- managed write processes own workspaces as `process:<processId>`
+- Git transactions own workspaces as `transaction:<txId>`
+- explicit `runtime.workspace acquire` remains available for deliberate manual ownership
+
+Workspace conflicts are hierarchical. A parent workspace and child repository cannot bypass one another merely because their resource keys are different strings. Independent sibling repositories remain concurrent.
+
+Managed processes persist PID/log/ownership metadata, pin workspace ownership while alive, reconcile after Runtime restart, and support explicit claim when the former transport is gone. Process exit releases process-scoped workspace ownership.
+
+Session-only leases from a previous Runtime instance are reclaimed when they have no durable Task owner and no pinned process.
+
+Production mode now has an explicit deployment boundary:
+
+- development state defaults to `~/.computer-mcp-dev`
+- production state defaults to `~/.computer-mcp`
+- test state defaults to `~/.computer-mcp-test`
+- production executes compiled `dist/server.js` from immutable release directories
+- launchd keeps the service alive
+- installation health-checks the selected release
+- failed installation switches back to the previous release
+- the production Runtime refuses to mutate its own active code workspace by default
+
+v0.9.11 also fixes same-file `batch_edit_files` composition so multiple ordered edits to one file are validated in memory and written once instead of overwriting one another.
+
+See:
+
+- `docs/CONCURRENCY_AND_OWNERSHIP.md`
+- `docs/PRODUCTION_RUNTIME.md`
+
+Verification:
+
+```bash
+npm run verify:concurrency
+npm run verify:production-runtime
+```

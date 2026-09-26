@@ -1,11 +1,13 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts",
+    "dev": "AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "AGENTOS_RUNTIME_MODE=production node dist/server.js",
+    "start:source": "AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "verify:isa": "tsx scripts/verify-primitive-isa.ts",
     "verify:skill-abi": "tsx scripts/verify-skill-abi.ts",
@@ -18,7 +20,12 @@
     "verify:identity": "tsx scripts/verify-runtime-identity.ts",
     "verify:embedding-provider": "tsx scripts/verify-embedding-provider.ts",
     "verify:wechat-session": "tsx scripts/verify-wechat-session.ts",
-    "verify:macos-helper": "xcrun swiftc -frontend -parse macos-helper/ComputerMCPHelper.swift"
+    "verify:macos-helper": "xcrun swiftc -frontend -parse macos-helper/ComputerMCPHelper.swift",
+    "verify:concurrency": "tsx scripts/verify-concurrency.ts",
+    "verify:production-runtime": "npm run build && tsx scripts/verify-production-runtime.ts",
+    "install:production": "bash scripts/install-production-runtime.sh",
+    "status:production": "bash scripts/status-production-runtime.sh",
+    "uninstall:production": "bash scripts/uninstall-production-runtime.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

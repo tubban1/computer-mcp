@@ -48,6 +48,12 @@ import {
   summarizeActionContract,
 } from "../runtime/actionContracts.js";
 import { resourceArbiter } from "../runtime/resourceArbiter.js";
+import { resolveActionWorkspaces } from "../runtime/workspaceResolver.js";
+import {
+  assertWorkspaceWriteAllowed,
+  ensureWorkspaceWriteLease,
+} from "../runtime/workspaceLeaseManager.js";
+import { currentExecutionContext } from "../runtime/executionContext.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -214,6 +220,7 @@ const actions = {
       command: z.string().min(1),
       cwd: z.string(),
       timeout_ms: z.number().int().min(1000).max(600000).optional(),
+      workspace_mode: z.enum(["read", "write"]).optional(),
     }),
     destructive: true,
     openWorld: true,
@@ -223,10 +230,15 @@ const actions = {
   "shell.start": {
     provider: "shell",
     description: "Start a managed long-running process.",
-    schema: z.object({ command: z.string().min(1), cwd: z.string() }),
+    schema: z.object({
+      command: z.string().min(1),
+      cwd: z.string(),
+      workspace_mode: z.enum(["read", "write"]).optional(),
+    }),
     destructive: true,
     openWorld: true,
-    run: ({ command, cwd }: any) => startProcess(command, cwd),
+    run: ({ command, cwd, workspace_mode }: any) =>
+      startProcess(command, cwd, workspace_mode ?? "write"),
   },
   "shell.processes": {
     provider: "shell",
@@ -766,9 +778,61 @@ export async function executeRoutedAction(
   const contract = getActionContract(action, parsed);
   const startedAt = Date.now();
   const bypass = new Set(options?.bypassResourceKeys ?? []);
-  const resources = contract.resources.filter(
-    (requirement) => !bypass.has(requirement.key),
-  );
+
+  const workspaces = await resolveActionWorkspaces(action, parsed);
+  const workspaceResources = workspaces
+    .map((item) => ({
+      key: `workspace:${item.workspace}`,
+      mode: item.mode === "write" ? ("exclusive" as const) : ("shared" as const),
+    }))
+    .filter((requirement) => !bypass.has(requirement.key));
+  const resources = [
+    ...contract.resources.filter(
+      (requirement) => !bypass.has(requirement.key),
+    ),
+    ...workspaceResources,
+  ];
+  const workspaceOwnership: Array<Record<string, unknown>> = [];
+  const executionContext = currentExecutionContext();
+  for (const item of workspaces) {
+    if (item.mode === "write") {
+      if (executionContext.taskId) {
+        const lease = await ensureWorkspaceWriteLease(item.workspace, {
+          context: executionContext,
+          purpose: `${action} via ${item.source}`,
+          auto: true,
+        });
+        workspaceOwnership.push({
+          workspace: item.workspace,
+          mode: item.mode,
+          leaseId: lease.id,
+          ownerKey: lease.ownerKey,
+          expiresAt: lease.expiresAt,
+          runtimeSelf: lease.runtimeSelf,
+          scope: "task",
+        });
+      } else {
+        const allowed = await assertWorkspaceWriteAllowed(
+          item.workspace,
+          executionContext,
+        );
+        workspaceOwnership.push({
+          workspace: item.workspace,
+          mode: item.mode,
+          leaseId: allowed.coveringLease?.id ?? null,
+          ownerKey: allowed.coveringLease?.ownerKey ?? null,
+          scope: "action",
+        });
+      }
+    } else {
+      workspaceOwnership.push({
+        workspace: item.workspace,
+        mode: item.mode,
+        leaseId: null,
+        scope: "action",
+      });
+    }
+  }
 
   const executed = await resourceArbiter.withResources(
     action,
@@ -782,6 +846,7 @@ export async function executeRoutedAction(
     durationMs: Date.now() - startedAt,
     resourceWaitMs: executed.lease.waitMs,
     contract: summarizeActionContract(contract),
+    workspaceOwnership,
     result: executed.result,
   };
 }

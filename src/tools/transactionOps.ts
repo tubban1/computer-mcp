@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "../runtime/runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,11 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { assertAllowedExistingPath } from "../security/pathGuard.js";
 import { requireCapability } from "../security/capabilities.js";
+import { currentExecutionContext } from "../runtime/executionContext.js";
+import {
+  ensureWorkspaceWriteLease,
+  releaseWorkspaceLeasesForTask,
+} from "../runtime/workspaceLeaseManager.js";
 
 export type TransactionState = "active" | "completed" | "rolled_back";
 
@@ -17,6 +23,8 @@ export interface TransactionMetadata {
   checkpointSha: string;
   checkpointRef: string;
   createdAt: string;
+  ownerSessionId?: string;
+  ownerTaskId?: string;
   state: TransactionState;
   originalStatus: string;
   stagedPatchFile: string;
@@ -26,7 +34,7 @@ export interface TransactionMetadata {
 }
 
 function transactionDir(): string {
-  return process.env.TRANSACTION_DIR?.trim() || path.join(os.homedir(), ".computer-mcp", "transactions");
+  return process.env.TRANSACTION_DIR?.trim() || runtimeStatePath("transactions");
 }
 
 function metadataPath(id: string): string {
@@ -98,6 +106,17 @@ export async function beginTransaction(cwd: string, label = "computer-mcp task")
   requireCapability("ALLOW_WRITE", true);
 
   const repoRoot = await resolveRepoRoot(cwd);
+  const context = currentExecutionContext();
+  const id = transactionId();
+  const transactionContext = {
+    ...context,
+    taskId: `transaction:${id}`,
+  };
+  await ensureWorkspaceWriteLease(repoRoot, {
+    context: transactionContext,
+    purpose: `Git transaction: ${label}`,
+    auto: true,
+  });
   const originalHeadResult = await runGit(repoRoot, ["rev-parse", "HEAD"], { allowFailure: true });
   if (originalHeadResult.exitCode !== 0) {
     throw new Error("Transactions currently require a Git repository with at least one commit.");
@@ -105,7 +124,6 @@ export async function beginTransaction(cwd: string, label = "computer-mcp task")
 
   const originalHead = originalHeadResult.stdout.trim();
   const branch = await currentBranch(repoRoot);
-  const id = transactionId();
   const checkpointRef = `refs/computer-mcp/checkpoints/${id}`;
   const tempIndex = path.join(os.tmpdir(), `computer-mcp-index-${randomUUID()}`);
   const alternateIndexEnv = { GIT_INDEX_FILE: tempIndex };
@@ -144,6 +162,8 @@ export async function beginTransaction(cwd: string, label = "computer-mcp task")
       checkpointSha,
       checkpointRef,
       createdAt: new Date().toISOString(),
+      ownerSessionId: context.sessionId,
+      ...(context.taskId ? { ownerTaskId: context.taskId } : {}),
       state: "active",
       originalStatus,
       stagedPatchFile: stagedFile,
@@ -218,6 +238,14 @@ export async function rollbackTransaction(id: string) {
   requireCapability("ALLOW_ROLLBACK", false);
 
   const metadata = await readTransaction(id);
+  await ensureWorkspaceWriteLease(metadata.repoRoot, {
+    context: {
+      ...currentExecutionContext(),
+      taskId: `transaction:${id}`,
+    },
+    purpose: `Rollback transaction ${id}`,
+    auto: true,
+  });
   if (metadata.state !== "active") {
     throw new Error(`Transaction ${id} is ${metadata.state}; only active transactions can be rolled back.`);
   }
@@ -250,6 +278,7 @@ export async function rollbackTransaction(id: string) {
   metadata.rolledBackAt = new Date().toISOString();
   metadata.safetyRef = safetyRef;
   await writeTransaction(metadata);
+  await releaseWorkspaceLeasesForTask(`transaction:${id}`);
 
   return {
     id,
@@ -264,6 +293,14 @@ export async function rollbackTransaction(id: string) {
 
 export async function completeTransaction(id: string, keepCheckpoint = false) {
   const metadata = await readTransaction(id);
+  await ensureWorkspaceWriteLease(metadata.repoRoot, {
+    context: {
+      ...currentExecutionContext(),
+      taskId: `transaction:${id}`,
+    },
+    purpose: `Complete transaction ${id}`,
+    auto: true,
+  });
   if (metadata.state !== "active") {
     throw new Error(`Transaction ${id} is already ${metadata.state}.`);
   }
@@ -276,6 +313,7 @@ export async function completeTransaction(id: string, keepCheckpoint = false) {
   metadata.state = "completed";
   metadata.completedAt = new Date().toISOString();
   await writeTransaction(metadata);
+  await releaseWorkspaceLeasesForTask(`transaction:${id}`);
 
   return {
     id,

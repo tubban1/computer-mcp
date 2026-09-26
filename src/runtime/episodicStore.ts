@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -59,14 +60,14 @@ type EncryptedEnvelope = {
 function episodicDir(): string {
   return (
     process.env.EPISODIC_INDEX_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "episodes")
+    runtimeStatePath("episodes")
   );
 }
 
 function episodicKeyPath(): string {
   return (
     process.env.EPISODIC_INDEX_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "episode.key")
+    runtimeStatePath("episode.key")
   );
 }
 

@@ -254,36 +254,50 @@ export async function batchEditFiles(
 ) {
   requireCapability("ALLOW_WRITE", true);
   if (edits.length === 0) throw new Error("At least one edit is required.");
-  if (edits.length > 100) throw new Error("batch_edit_files accepts at most 100 edits.");
+  if (edits.length > 100) {
+    throw new Error("batch_edit_files accepts at most 100 edits.");
+  }
 
-  const prepared: Array<{
-    path: string;
-    updated: string;
-    replacements: number;
-  }> = [];
+  // Multiple edits targeting the same file must compose in the order supplied.
+  // Validate the complete batch in memory first; only write after every edit
+  // has succeeded so a late mismatch cannot leave earlier files half-applied.
+  const files = new Map<
+    string,
+    { original: string; updated: string }
+  >();
+  const results: Array<{ path: string; replacements: number }> = [];
 
   for (const edit of edits) {
     if (!edit.oldText) throw new Error("old_text must not be empty.");
     const safePath = await assertAllowedExistingPath(edit.path);
-    const original = await fs.readFile(safePath, "utf8");
+    let state = files.get(safePath);
+    if (!state) {
+      const original = await fs.readFile(safePath, "utf8");
+      state = { original, updated: original };
+      files.set(safePath, state);
+    }
 
-    if (!original.includes(edit.oldText)) {
-      throw new Error(`old_text was not found in ${safePath}; no files were changed.`);
+    if (!state.updated.includes(edit.oldText)) {
+      throw new Error(
+        `old_text was not found in ${safePath}; no files were changed.`,
+      );
     }
 
     const replacements = edit.replaceAll
-      ? original.split(edit.oldText).length - 1
+      ? state.updated.split(edit.oldText).length - 1
       : 1;
-    const updated = edit.replaceAll
-      ? original.split(edit.oldText).join(edit.newText)
-      : original.replace(edit.oldText, edit.newText);
+    state.updated = edit.replaceAll
+      ? state.updated.split(edit.oldText).join(edit.newText)
+      : state.updated.replace(edit.oldText, edit.newText);
 
-    prepared.push({ path: safePath, updated, replacements });
+    results.push({ path: safePath, replacements });
   }
 
-  for (const item of prepared) {
-    await fs.writeFile(item.path, item.updated, "utf8");
+  for (const [filePath, state] of files) {
+    if (state.updated !== state.original) {
+      await fs.writeFile(filePath, state.updated, "utf8");
+    }
   }
 
-  return prepared.map(({ path, replacements }) => ({ path, replacements }));
+  return results;
 }

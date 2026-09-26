@@ -69,6 +69,18 @@ import {
   getEmbeddingProviderStatus,
 } from "../runtime/embeddingProvider.js";
 import {
+  ensureWorkspaceWriteLease,
+  getWorkspaceLeaseStorageInfo,
+  listWorkspaceLeases,
+  releaseWorkspaceLease,
+  workspaceLeaseStatus,
+} from "../runtime/workspaceLeaseManager.js";
+import {
+  claimRecoveredProcess,
+  getProcessOutput,
+  listProcesses,
+} from "../tools/shellOps.js";
+import {
   bindWeChatSession,
   captureLatestWeChatReply,
   deletePersistentWeChatSession,
@@ -203,6 +215,30 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     },
   },
   "runtime.embedding": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.workspace": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.process": {
     skillVersion: "0.1.0",
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
@@ -773,6 +809,24 @@ const EMBEDDING_CONTRACT: SkillContract = {
   sideEffects: ["optional_external_embedding_request"],
   requiresVerification: false,
   retryPolicy: "automatic",
+  resources: [],
+};
+
+const WORKSPACE_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: true,
+  sideEffects: ["workspace_lease_mutation"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [],
+};
+
+const PROCESS_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: true,
+  sideEffects: ["process_ownership_claim_when_requested"],
+  requiresVerification: true,
+  retryPolicy: "manual",
   resources: [],
 };
 
@@ -1523,6 +1577,139 @@ const skills: SkillDefinition[] = [
           : {}),
         usage: result.usage ?? null,
       };
+    },
+  },
+  {
+    id: "runtime.workspace",
+    domain: "runtime",
+    description:
+      "Inspect and manage durable write ownership for a canonical workspace/repository across MCP sessions, tasks, and long-running processes.",
+    keywords: [
+      "workspace lease",
+      "workspace lock",
+      "ownership",
+      "concurrency",
+      "busy repo",
+      "session isolation",
+      "工作区",
+      "并发",
+      "所有权",
+    ],
+    contract: WORKSPACE_CONTRACT,
+    inputs: {
+      op:
+        "status | list | acquire | renew | release. Default: status.",
+      workspace:
+        "Path anywhere inside the repository/workspace. Required except for list.",
+      purpose:
+        "Optional human-readable reason for acquire/renew ownership.",
+      ttl_ms:
+        "Optional lease TTL in milliseconds; minimum 10000, maximum 24 hours.",
+      wait_ms:
+        "Optional time to wait for current writer to release; default 0, maximum 10 minutes.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "status",
+      workspace: args.workspace ?? null,
+      semantics: {
+        durableWriteOwnership: true,
+        readsMayContinueWhileWriteOwned: true,
+        takeover: "deferred_to_drain_protocol",
+      },
+      storage: getWorkspaceLeaseStorageInfo(),
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "status";
+
+      if (operation === "list") {
+        return {
+          leases: await listWorkspaceLeases(),
+          storage: getWorkspaceLeaseStorageInfo(),
+        };
+      }
+
+      const workspace = requiredText(args, "workspace");
+
+      if (operation === "status") {
+        return await workspaceLeaseStatus(workspace);
+      }
+
+      if (operation === "acquire" || operation === "renew") {
+        return await ensureWorkspaceWriteLease(workspace, {
+          purpose:
+            typeof args.purpose === "string" && args.purpose.trim()
+              ? args.purpose.trim()
+              : undefined,
+          ttlMs:
+            typeof args.ttl_ms === "number"
+              ? Math.min(Math.max(Math.trunc(args.ttl_ms), 10_000), 86_400_000)
+              : undefined,
+          waitMs:
+            typeof args.wait_ms === "number"
+              ? Math.min(Math.max(Math.trunc(args.wait_ms), 0), 600_000)
+              : undefined,
+          auto: false,
+        });
+      }
+
+      if (operation === "release") {
+        return await releaseWorkspaceLease(workspace);
+      }
+
+      throw new Error(
+        'runtime.workspace op must be "status", "list", "acquire", "renew", or "release".',
+      );
+    },
+  },
+  {
+    id: "runtime.process",
+    domain: "runtime",
+    description:
+      "Inspect durable managed processes and explicitly claim an orphaned process after Runtime restart.",
+    keywords: [
+      "process ownership",
+      "managed process",
+      "claim process",
+      "runtime restart",
+      "后台进程",
+      "进程恢复",
+      "进程所有权",
+    ],
+    contract: PROCESS_CONTRACT,
+    inputs: {
+      op: "list | status | claim. Default: list.",
+      process_id: "Managed process id for status or claim.",
+      tail_chars: "Optional log tail length for status; default 20000.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "list",
+      processId: args.process_id ?? null,
+      claimRequiresRecoveredOrphan: true,
+      implicitTakeover: false,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "list";
+
+      if (operation === "list") {
+        return { processes: await listProcesses() };
+      }
+
+      const processId = requiredText(args, "process_id");
+      if (operation === "status") {
+        return await getProcessOutput(
+          processId,
+          typeof args.tail_chars === "number" ? args.tail_chars : 20_000,
+        );
+      }
+      if (operation === "claim") {
+        return await claimRecoveredProcess(processId);
+      }
+
+      throw new Error(
+        'runtime.process op must be "list", "status", or "claim".',
+      );
     },
   },
   {

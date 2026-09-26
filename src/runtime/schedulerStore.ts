@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -63,14 +64,14 @@ type EncryptedEnvelope = {
 function scheduleDir(): string {
   return (
     process.env.SCHEDULER_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "schedules")
+    runtimeStatePath("schedules")
   );
 }
 
 function scheduleKeyPath(): string {
   return (
     process.env.SCHEDULER_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "schedule.key")
+    runtimeStatePath("schedule.key")
   );
 }
 

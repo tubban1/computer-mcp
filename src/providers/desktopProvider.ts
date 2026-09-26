@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "../runtime/runtimePaths.js";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -41,7 +42,7 @@ function helperAppPath(): string {
 function helperSocketPath(): string {
   return (
     process.env.COMPUTER_MCP_HELPER_SOCKET?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "helper.sock")
+    runtimeStatePath("helper.sock")
   );
 }
 

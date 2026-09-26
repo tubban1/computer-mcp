@@ -112,16 +112,34 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
       retryPolicy: "manual",
       requiresVerification: true,
       parallelSafe: false,
-      resources: [resource("shell", "exclusive")],
+      // v0.9.11 injects canonical workspace shared/exclusive resources in the
+      // Action Router. A global "shell" mutex would unnecessarily serialize
+      // independent repositories and defeat cross-workspace concurrency.
+      resources: [],
     };
   }
-  if (["shell.processes", "shell.output"].includes(action)) return { ...SAFE_READ };
+  if (action === "shell.processes") return { ...SAFE_READ };
+  if (action === "shell.output") {
+    const processId = text(args, "process_id");
+    return {
+      ...SAFE_READ,
+      resources: processId
+        ? [resource(`process:${processId}`, "shared")]
+        : [],
+    };
+  }
   if (["shell.input", "shell.kill"].includes(action)) {
+    const processId = text(args, "process_id");
     return {
       ...STATE_CHANGE,
       riskLevel: "high",
       sideEffects: ["process_control"],
-      resources: [resource("process", "exclusive")],
+      resources: [
+        resource(
+          processId ? `process:${processId}` : "process",
+          "exclusive",
+        ),
+      ],
     };
   }
 

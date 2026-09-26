@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "../runtime/runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -61,6 +62,7 @@ export interface PersistentTask {
   version: 1;
   id: string;
   label: string;
+  ownerSessionId?: string;
   createdAt: string;
   updatedAt: string;
   status: PersistentTaskStatus;
@@ -95,14 +97,14 @@ type EncryptedEnvelope = {
 function taskDir(): string {
   return (
     process.env.TASK_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "tasks")
+    runtimeStatePath("tasks")
   );
 }
 
 function taskKeyPath(): string {
   return (
     process.env.TASK_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "task.key")
+    runtimeStatePath("task.key")
   );
 }
 

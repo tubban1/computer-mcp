@@ -1,3 +1,4 @@
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ResourceRequirement } from "./actionContracts.js";
 
@@ -22,6 +23,24 @@ export type ResourceLease = {
   release: () => void;
 };
 
+function pathContains(parent: string, child: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
+function resourceKeysConflict(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.startsWith("workspace:") && right.startsWith("workspace:")) {
+    const leftPath = left.slice("workspace:".length);
+    const rightPath = right.slice("workspace:".length);
+    return pathContains(leftPath, rightPath) || pathContains(rightPath, leftPath);
+  }
+  return false;
+}
+
 function normalizeResources(resources: ResourceRequirement[]): ResourceRequirement[] {
   const byKey = new Map<string, ResourceRequirement>();
   for (const item of resources) {
@@ -42,13 +61,14 @@ class ResourceArbiter {
 
   private canGrant(resources: ResourceRequirement[]): boolean {
     for (const requirement of resources) {
-      const state = this.active.get(requirement.key);
-      if (!state) continue;
+      for (const [activeKey, state] of this.active.entries()) {
+        if (!resourceKeysConflict(requirement.key, activeKey)) continue;
 
-      if (requirement.mode === "shared") {
-        if (state.writer) return false;
-      } else if (state.writer || state.readers.size > 0) {
-        return false;
+        if (requirement.mode === "shared") {
+          if (state.writer) return false;
+        } else if (state.writer || state.readers.size > 0) {
+          return false;
+        }
       }
     }
     return true;

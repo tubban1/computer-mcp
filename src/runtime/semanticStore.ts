@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -72,14 +73,14 @@ type EncryptedEnvelope = {
 function semanticDir(): string {
   return (
     process.env.SEMANTIC_MEMORY_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "semantic")
+    runtimeStatePath("semantic")
   );
 }
 
 function semanticKeyPath(): string {
   return (
     process.env.SEMANTIC_MEMORY_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "semantic.key")
+    runtimeStatePath("semantic.key")
   );
 }
 

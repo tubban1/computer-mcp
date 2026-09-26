@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "../runtime/runtimePaths.js";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -148,7 +149,7 @@ class BrowserProvider implements ComputerProvider {
     const configuredProfile = process.env.BROWSER_PROFILE_DIR?.trim();
     const userDataDir =
       configuredProfile ||
-      path.join(os.homedir(), ".computer-mcp", "browser-profiles", "default");
+      runtimeStatePath("browser-profiles", "default");
     await fs.mkdir(userDataDir, { recursive: true });
 
     const port = await findFreePort();

@@ -18,6 +18,11 @@ import {
 } from "./taskStaging.js";
 import { indexTaskEpisode } from "../runtime/episodicIndex.js";
 import {
+  currentExecutionContext,
+  withChildExecutionContext,
+} from "../runtime/executionContext.js";
+import { releaseWorkspaceLeasesForTask } from "../runtime/workspaceLeaseManager.js";
+import {
   appendTaskEvent,
   deletePersistentTaskRecord,
   getTaskStorageInfo,
@@ -107,6 +112,7 @@ function summarizeTask(task: PersistentTask, includeResults = false) {
     id: task.id,
     label: task.label,
     status: task.status,
+    ownerSessionId: task.ownerSessionId ?? null,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     runCount: task.runCount,
@@ -321,6 +327,7 @@ export async function createPersistentTask(
     version: 1,
     id,
     label,
+    ownerSessionId: currentExecutionContext().sessionId,
     createdAt: now,
     updatedAt: now,
     status: "pending",
@@ -427,6 +434,7 @@ export async function createPersistentPrimitiveTask(
     version: 1,
     id,
     label,
+    ownerSessionId: currentExecutionContext().sessionId,
     createdAt: now,
     updatedAt: now,
     status: "pending",
@@ -489,6 +497,7 @@ export async function listPersistentTasks() {
     id: task.id,
     label: task.label,
     status: task.status,
+    ownerSessionId: task.ownerSessionId ?? null,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     runCount: task.runCount,
@@ -849,56 +858,70 @@ export async function runPersistentTask(
       await writePersistentTask(task);
 
       const results = await Promise.all(
-        wave.map(async (step) => {
-          const stepStartedAt = Date.now();
-          try {
-            const resolvedArgs = resolveReferences(step.args, outputs) as Record<
-              string,
-              unknown
-            >;
+        wave.map(async (step) =>
+          await withChildExecutionContext(
+            {
+              sessionId:
+                task.ownerSessionId ?? currentExecutionContext().sessionId,
+              origin: "task",
+              taskId: task.id,
+            },
+            async () => {
+              const stepStartedAt = Date.now();
+              try {
+                const resolvedArgs = resolveReferences(
+                  step.args,
+                  outputs,
+                ) as Record<string, unknown>;
 
-            if (step.executionKind === "primitive" && step.primitive && step.op) {
-              const resolved = resolvePrimitive(
-                step.primitive,
-                step.op,
-                resolvedArgs,
-              );
-              const executed = await executePrimitive(
-                step.primitive,
-                step.op,
-                resolved.validation.args,
-              );
-              return {
-                id: step.id,
-                ok: true as const,
-                provider: executed.provider,
-                durationMs: Date.now() - stepStartedAt,
-                result: executed.result,
-              };
-            }
+                if (
+                  step.executionKind === "primitive" &&
+                  step.primitive &&
+                  step.op
+                ) {
+                  const resolved = resolvePrimitive(
+                    step.primitive,
+                    step.op,
+                    resolvedArgs,
+                  );
+                  const executed = await executePrimitive(
+                    step.primitive,
+                    step.op,
+                    resolved.validation.args,
+                  );
+                  return {
+                    id: step.id,
+                    ok: true as const,
+                    provider: executed.provider,
+                    durationMs: Date.now() - stepStartedAt,
+                    result: executed.result,
+                  };
+                }
 
-            validateRoutedAction(step.action, resolvedArgs);
-            const executed = await executeRoutedAction(
-              step.action,
-              resolvedArgs,
-            );
-            return {
-              id: step.id,
-              ok: true as const,
-              provider: executed.provider,
-              durationMs: Date.now() - stepStartedAt,
-              result: executed.result,
-            };
-          } catch (error) {
-            return {
-              id: step.id,
-              ok: false as const,
-              durationMs: Date.now() - stepStartedAt,
-              error:
-                error instanceof Error ? error.message : String(error),
-            };
-          }
-        }),
+                validateRoutedAction(step.action, resolvedArgs);
+                const executed = await executeRoutedAction(
+                  step.action,
+                  resolvedArgs,
+                );
+                return {
+                  id: step.id,
+                  ok: true as const,
+                  provider: executed.provider,
+                  durationMs: Date.now() - stepStartedAt,
+                  result: executed.result,
+                };
+              } catch (error) {
+                return {
+                  id: step.id,
+                  ok: false as const,
+                  durationMs: Date.now() - stepStartedAt,
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                };
+              }
+            },
+          ),
+        ),
       );
 
       const latest = await readPersistentTask(id);
@@ -1052,6 +1075,25 @@ export async function runPersistentTask(
           type: "episodic_index_warning",
           message:
             "Task reached a terminal state, but global episodic indexing failed: " +
+            (error instanceof Error ? error.message : String(error)),
+        });
+      }
+    }
+
+    if (["completed", "failed", "blocked", "cancelled"].includes(task.status)) {
+      try {
+        const released = await releaseWorkspaceLeasesForTask(task.id);
+        if (released > 0) {
+          appendTaskEvent(task, {
+            type: "workspace_leases_released",
+            message: `Released ${released} task-owned workspace lease(s) after terminal state.`,
+          });
+        }
+      } catch (error) {
+        appendTaskEvent(task, {
+          type: "workspace_lease_warning",
+          message:
+            "Task reached a terminal state, but workspace lease cleanup failed: " +
             (error instanceof Error ? error.message : String(error)),
         });
       }

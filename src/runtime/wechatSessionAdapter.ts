@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -55,7 +56,7 @@ function normalize(value: string): string {
 function stagingRoot(): string {
   return (
     process.env.TASK_STAGING_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "staging")
+    runtimeStatePath("staging")
   );
 }
 

@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -53,14 +54,14 @@ type EncryptedEnvelope = {
 function storeDir(): string {
   return (
     process.env.WECHAT_SESSION_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "wechat-sessions")
+    runtimeStatePath("wechat-sessions")
   );
 }
 
 function keyPath(): string {
   return (
     process.env.WECHAT_SESSION_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "wechat-session.key")
+    runtimeStatePath("wechat-session.key")
   );
 }
 

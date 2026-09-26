@@ -1,3 +1,4 @@
+import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -65,14 +66,14 @@ type EncryptedEnvelope = {
 function sessionDir(): string {
   return (
     process.env.SESSION_ADAPTER_DIR?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "sessions")
+    runtimeStatePath("sessions")
   );
 }
 
 function sessionKeyPath(): string {
   return (
     process.env.SESSION_ADAPTER_KEY_PATH?.trim() ||
-    path.join(os.homedir(), ".computer-mcp", "session.key")
+    runtimeStatePath("session.key")
   );
 }
 

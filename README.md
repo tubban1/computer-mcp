@@ -14,6 +14,10 @@ Memory & staging model: [`docs/MEMORY_AND_STAGING.md`](docs/MEMORY_AND_STAGING.m
 
 Skill ABI: [`docs/SKILL_ABI.md`](docs/SKILL_ABI.md)
 
+Concurrency & durable ownership: [`docs/CONCURRENCY_AND_OWNERSHIP.md`](docs/CONCURRENCY_AND_OWNERSHIP.md)
+
+Production Runtime: [`docs/PRODUCTION_RUNTIME.md`](docs/PRODUCTION_RUNTIME.md)
+
 ## v0.9 — Primitive & Skill Runtime
 
 v0.9 incorporates the strongest architectural ideas from the earlier Owl Lab Agent OS work without adding a second LLM planner.
