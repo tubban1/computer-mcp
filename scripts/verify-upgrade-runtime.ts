@@ -235,6 +235,19 @@ try {
     cwd: root,
     timeout: 10_000,
   });
+  await execFileAsync(
+    "/bin/zsh",
+    ["-c", 'x=120000; [[ "$x" =~ ^[0-9]+$ ]]'],
+    { cwd: root, timeout: 10_000 },
+  );
+  await assert.rejects(
+    () =>
+      execFileAsync(
+        "/bin/zsh",
+        ["-c", 'x=abc; [[ "$x" =~ ^[0-9]+$ ]]'],
+        { cwd: root, timeout: 10_000 },
+      ),
+  );
 
   console.log(
     JSON.stringify(
@@ -257,6 +270,7 @@ try {
         drainWait: true,
         resume: true,
         upgradeScriptSyntax: true,
+        drainTimeoutValidation: true,
         installScriptSyntax: true,
       },
       null,

@@ -22,7 +22,7 @@ CONTROL_CLIENT="$REPO_ROOT/scripts/runtime-control-client.mjs"
 PREVIOUS_RELEASE="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 DRAIN_TIMEOUT_MS="${AGENTOS_UPGRADE_DRAIN_TIMEOUT_MS:-120000}"
 
-if [[ ! "$DRAIN_TIMEOUT_MS" =~ '^[0-9]+$' ]]; then
+if ! [[ "$DRAIN_TIMEOUT_MS" =~ ^[0-9]+$ ]]; then
   echo "AGENTOS_UPGRADE_DRAIN_TIMEOUT_MS must be an integer number of milliseconds."
   exit 2
 fi
