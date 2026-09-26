@@ -68,6 +68,7 @@ A recommended release flow is:
 npm run typecheck
 npm run verify:concurrency
 npm run verify:drain-handoff
+npm run verify:state-schema
 npm run verify:upgrade-runtime
 npm run verify:production-runtime
 git status
@@ -136,7 +137,7 @@ A healthy production response should report:
 ```json
 {
   "ok": true,
-  "version": "0.9.13",
+  "version": "0.9.14",
   "runtime": {
     "mode": "production"
   }

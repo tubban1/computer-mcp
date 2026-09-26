@@ -101,6 +101,10 @@ import {
   runtimePathStatus,
 } from "./runtime/runtimePaths.js";
 import { runtimeLifecycle } from "./runtime/runtimeLifecycle.js";
+import {
+  assertStateSchemaReadable,
+  getStateSchemaStatus,
+} from "./runtime/stateSchema.js";
 import { releaseWorkspaceLeasesForSession } from "./runtime/workspaceLeaseManager.js";
 
 type ToolAuditContext = {
@@ -240,7 +244,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.13",
+    version: "0.9.14",
   });
 
   server.tool(
@@ -922,12 +926,13 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.13",
+          version: "0.9.14",
           identity: getRuntimeIdentity(),
           runtime: {
             ...runtimePathStatus(),
             sessions: runtimeSessionManager.summary(),
             lifecycle: runtimeLifecycle.status(),
+            stateSchema: await getStateSchemaStatus(),
           },
           allowedDirectories: configuredRoots(),
           runtimeOwnedDirectories: runtimeOwnedRoots(),
@@ -970,6 +975,8 @@ function createServer() {
           gracefulDrain: true,
           workspaceHandoff: true,
           upgradeCandidateMode: true,
+          versionedStateSchema: true,
+          stateMigrationRegistry: true,
           workspaceLeases: true,
           persistentProcessOwnership: true,
           productionRuntimeIsolation: true,
@@ -2045,6 +2052,7 @@ const app = express();
 app.use(express.json({ limit: "4mb" }));
 
 const candidateMode = runtimeCandidateMode();
+await assertStateSchemaReadable();
 if (candidateMode) {
   runtimeLifecycle.requestDrain({
     reason: "candidate_preflight",
@@ -2160,16 +2168,17 @@ function runtimeHealthLifecycle() {
   };
 }
 
-app.get("/health", (_req, res) => {
+app.get("/health", async (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.13",
+    version: "0.9.14",
     identity: getRuntimeIdentity(),
     runtime: {
       ...runtimePathStatus(),
       sessions: runtimeSessionManager.summary(),
       lifecycle: runtimeHealthLifecycle(),
+      stateSchema: await getStateSchemaStatus(),
       backgroundControllersStarted: !candidateMode,
     },
     capabilities: {
@@ -2212,6 +2221,8 @@ app.get("/health", (_req, res) => {
       gracefulDrain: true,
       workspaceHandoff: true,
       upgradeCandidateMode: true,
+      versionedStateSchema: true,
+      stateMigrationRegistry: true,
       workspaceLeases: true,
       persistentProcessOwnership: true,
       productionRuntimeIsolation: true,
@@ -2234,7 +2245,7 @@ if (candidateMode) {
       `AgentOS candidate preflight mode: background controllers disabled.`,
     );
     console.log(
-      `computer-mcp v0.9.13 candidate listening on http://127.0.0.1:${port}/mcp`,
+      `computer-mcp v0.9.14 candidate listening on http://127.0.0.1:${port}/mcp`,
     );
   });
 } else {
@@ -2246,6 +2257,6 @@ if (candidateMode) {
     console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
     console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
     console.log(`AgentOS process monitor poll=${processMonitor.pollMs}ms`);
-    console.log(`computer-mcp v0.9.13 listening on http://127.0.0.1:${port}/mcp`);
+    console.log(`computer-mcp v0.9.14 listening on http://127.0.0.1:${port}/mcp`);
   });
 }

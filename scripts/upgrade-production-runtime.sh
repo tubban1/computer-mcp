@@ -19,6 +19,7 @@ LABEL="com.agentos.runtime"
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
 CONTROL_CLIENT="$REPO_ROOT/scripts/runtime-control-client.mjs"
+STATE_CLIENT="$REPO_ROOT/scripts/runtime-state-client.mjs"
 PREVIOUS_RELEASE="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 DRAIN_TIMEOUT_MS="${AGENTOS_UPGRADE_DRAIN_TIMEOUT_MS:-120000}"
 
@@ -132,6 +133,7 @@ CANDIDATE_PORT="$(
   '
 )"
 CANDIDATE_HEALTH_URL="http://127.0.0.1:$CANDIDATE_PORT/health"
+CANDIDATE_MCP_URL="http://127.0.0.1:$CANDIDATE_PORT/mcp"
 CANDIDATE_HEALTH="$AGENTOS_HOME/upgrade-candidate-health.json"
 CANDIDATE_STDOUT="$LOG_DIR/candidate-$RELEASE_NAME.stdout.log"
 CANDIDATE_STDERR="$LOG_DIR/candidate-$RELEASE_NAME.stderr.log"
@@ -197,7 +199,17 @@ for _ in {1..160}; do
         h?.runtime?.codeRoot === release &&
         h?.runtime?.backgroundControllersStarted === false &&
         h?.runtime?.lifecycle?.state === "draining" &&
-        h?.capabilities?.upgradeCandidateMode === true;
+        h?.runtime?.stateSchema?.readable === true &&
+        (
+          h?.runtime?.stateSchema?.migrationRequired !== true ||
+          (
+            h?.runtime?.stateSchema?.autoMigrationSafe === true &&
+            h?.runtime?.stateSchema?.rollbackCompatible === true
+          )
+        ) &&
+        h?.capabilities?.upgradeCandidateMode === true &&
+        h?.capabilities?.versionedStateSchema === true &&
+        h?.capabilities?.stateMigrationRegistry === true;
       process.exit(ok ? 0 : 2);
     ' "$CANDIDATE_HEALTH" "$VERSION" "$STATE_ROOT" "$RELEASE_DIR"; then
       CANDIDATE_HEALTHY=true
@@ -239,7 +251,49 @@ if ! "$NODE_BIN" -e '
   exit 1
 fi
 
-echo "Current Runtime drained. Stopping candidate preflight before cutover..."
+STATE_MIGRATION_RESULT="$AGENTOS_HOME/upgrade-state-migration.json"
+STATE_MIGRATION_REQUIRED=false
+if "$NODE_BIN" -e '
+  const fs=require("fs");
+  const h=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  process.exit(h?.runtime?.stateSchema?.migrationRequired === true ? 0 : 1);
+' "$CANDIDATE_HEALTH"; then
+  STATE_MIGRATION_REQUIRED=true
+fi
+
+if [[ "$STATE_MIGRATION_REQUIRED" == "true" ]]; then
+  echo "Current Runtime drained. Applying candidate state-schema migration..."
+  if ! "$NODE_BIN" "$STATE_CLIENT" "$CANDIDATE_MCP_URL" migrate     "{\"confirm\":true}" > "$STATE_MIGRATION_RESULT"; then
+    echo "Candidate state-schema migration failed. Current Runtime will be resumed."
+    exit 1
+  fi
+
+  if ! /usr/bin/curl -fsS "$CANDIDATE_HEALTH_URL" > "$CANDIDATE_HEALTH" 2>/dev/null; then
+    echo "Candidate health failed after state migration. Current Runtime will be resumed."
+    exit 1
+  fi
+
+  if ! "$NODE_BIN" -e '
+    const fs=require("fs");
+    const h=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+    const s=h?.runtime?.stateSchema;
+    process.exit(
+      s?.readable === true &&
+      s?.migrationRequired === false &&
+      s?.nativeSchema === true &&
+      s?.schemaVersion === s?.currentSchemaVersion
+        ? 0
+        : 2
+    );
+  ' "$CANDIDATE_HEALTH"; then
+    echo "Candidate state-schema migration did not verify. Current Runtime will be resumed."
+    exit 1
+  fi
+else
+  echo "Current Runtime drained. State schema already current."
+fi
+
+echo "Stopping candidate preflight before cutover..."
 stop_candidate
 
 echo "Switching production current symlink to:"

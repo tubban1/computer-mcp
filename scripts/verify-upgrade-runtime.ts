@@ -12,6 +12,7 @@ const scratch = path.join(root, ".tmp-verify-upgrade-runtime");
 const stateRoot = path.join(scratch, "state");
 const distServer = path.join(root, "dist", "server.js");
 const controlClient = path.join(root, "scripts", "runtime-control-client.mjs");
+const stateClient = path.join(root, "scripts", "runtime-state-client.mjs");
 const packageJson = JSON.parse(
   await fs.readFile(path.join(root, "package.json"), "utf8"),
 ) as { version: string };
@@ -49,10 +50,21 @@ type Health = {
       state?: string;
       mutationIdle?: boolean;
     };
+    stateSchema?: {
+      schemaVersion?: number;
+      currentSchemaVersion?: number;
+      readable?: boolean;
+      migrationRequired?: boolean;
+      nativeSchema?: boolean;
+      autoMigrationSafe?: boolean;
+      rollbackCompatible?: boolean;
+    };
   };
   capabilities?: {
     gracefulDrain?: boolean;
     upgradeCandidateMode?: boolean;
+    versionedStateSchema?: boolean;
+    stateMigrationRegistry?: boolean;
   };
 };
 
@@ -137,15 +149,16 @@ async function stopRuntime(
   if (child.exitCode === null) child.kill("SIGKILL");
 }
 
-async function control(
+async function callRuntimeClient(
+  clientPath: string,
   port: number,
-  op: "status" | "drain" | "wait" | "resume",
+  op: string,
   args: Record<string, unknown> = {},
 ) {
   const { stdout, stderr } = await execFileAsync(
     process.execPath,
     [
-      controlClient,
+      clientPath,
       `http://127.0.0.1:${port}/mcp`,
       op,
       JSON.stringify(args),
@@ -157,9 +170,17 @@ async function control(
     },
   );
   if (stderr.trim()) {
-    throw new Error(`runtime control stderr: ${stderr.trim()}`);
+    throw new Error(`runtime client stderr: ${stderr.trim()}`);
   }
   return JSON.parse(stdout) as Record<string, any>;
+}
+
+async function control(
+  port: number,
+  op: "status" | "drain" | "wait" | "resume",
+  args: Record<string, unknown> = {},
+) {
+  return await callRuntimeClient(controlClient, port, op, args);
 }
 
 const currentPort = await freePort();
@@ -178,8 +199,11 @@ try {
       health.runtime?.candidateMode === false &&
       health.runtime?.backgroundControllersStarted === true &&
       health.runtime?.lifecycle?.state === "running" &&
+      health.runtime?.stateSchema?.readable === true &&
       health.capabilities?.gracefulDrain === true &&
-      health.capabilities?.upgradeCandidateMode === true,
+      health.capabilities?.upgradeCandidateMode === true &&
+      health.capabilities?.versionedStateSchema === true &&
+      health.capabilities?.stateMigrationRegistry === true,
   );
 
   candidate = startRuntime(candidatePort, true);
@@ -192,7 +216,13 @@ try {
       health.runtime?.candidateMode === true &&
       health.runtime?.backgroundControllersStarted === false &&
       health.runtime?.lifecycle?.state === "draining" &&
-      health.capabilities?.upgradeCandidateMode === true,
+      health.runtime?.stateSchema?.readable === true &&
+      health.runtime?.stateSchema?.migrationRequired === true &&
+      health.runtime?.stateSchema?.autoMigrationSafe === true &&
+      health.runtime?.stateSchema?.rollbackCompatible === true &&
+      health.capabilities?.upgradeCandidateMode === true &&
+      health.capabilities?.versionedStateSchema === true &&
+      health.capabilities?.stateMigrationRegistry === true,
   );
 
   assert.equal(candidateHealth.runtime?.stateRoot, currentHealth.runtime?.stateRoot);
@@ -215,6 +245,24 @@ try {
     (health) => health.runtime?.lifecycle?.state === "draining",
   );
   assert.equal(healthWhileDrained.runtime?.lifecycle?.mutationIdle, true);
+
+  const stateMigration = await callRuntimeClient(
+    stateClient,
+    candidatePort,
+    "migrate",
+    { confirm: true },
+  );
+  assert.equal(stateMigration.changed, true);
+
+  const candidateAfterMigration = await waitForHealth(
+    candidatePort,
+    (health) =>
+      health.runtime?.stateSchema?.migrationRequired === false &&
+      health.runtime?.stateSchema?.nativeSchema === true &&
+      health.runtime?.stateSchema?.schemaVersion ===
+        health.runtime?.stateSchema?.currentSchemaVersion,
+  );
+  assert.equal(candidateAfterMigration.runtime?.stateSchema?.nativeSchema, true);
 
   const resumed = await control(currentPort, "resume");
   assert.equal(resumed.lifecycle.state, "running");
@@ -283,6 +331,8 @@ try {
         },
         mcpDrainControl: true,
         drainWait: true,
+        candidateStateMigration: true,
+        stateMigrationBeforeCutover: true,
         resume: true,
         upgradeScriptSyntax: true,
         drainTimeoutValidation: true,

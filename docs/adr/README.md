@@ -19,3 +19,4 @@ Current ADRs:
 - [0004 — Immutable production Runtime](0004-production-runtime.md)
 - [0005 — Graceful drain and explicit handoff](0005-graceful-drain-handoff.md)
 - [0006 — Production upgrade protocol](0006-production-upgrade-protocol.md)
+- [0007 — Versioned durable state](0007-versioned-durable-state.md)

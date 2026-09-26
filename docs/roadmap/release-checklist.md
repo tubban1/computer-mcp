@@ -26,6 +26,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] Concurrency verifier
 - [ ] Drain/handoff verifier
 - [ ] Upgrade Runtime verifier
+- [ ] State schema verifier
 - [ ] Production Runtime verifier
 
 ## Production

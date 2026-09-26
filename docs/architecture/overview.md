@@ -433,3 +433,45 @@ npm run verify:upgrade-runtime
 ```
 
 Persistent-state schema migration remains a separate hardening milestone; candidate preflight does not mutate state merely to prove compatibility.
+
+
+### v0.9.14 — Versioned Durable State & Migration Registry
+
+v0.9.14 gives the production state root an explicit schema contract.
+
+A state root with no manifest is schema 0. The current Runtime schema is 1, represented by `runtime-state.json`.
+
+The L2 Skill `runtime.state` exposes:
+
+```text
+status
+plan
+migrate
+```
+
+Migration does not add a Primitive and does not change Primitive ABI v1.
+
+Production ordering is:
+
+```text
+candidate reads state
+→ old Runtime drains
+→ candidate applies only auto-safe + rollback-compatible migrations
+→ candidate verifies native state schema
+→ cutover
+```
+
+The first migration, `0001-bootstrap-state-manifest`, is additive and leaves all existing Task, Memory, Scheduler, Loop, Session, Process, browser, and WeChat data formats unchanged.
+
+Migration writes a durable journal before commit and uses atomic rename for the manifest. An idempotent pending migration can resume after a crash. A newer-than-supported state schema fails closed.
+
+This makes code rollback safety an explicit state-migration property instead of an assumption.
+
+See [Runtime Durable State Schema](../specifications/state-schema.md) and [ADR-0007](../adr/0007-versioned-durable-state.md).
+
+Verification:
+
+```bash
+npm run verify:state-schema
+npm run verify:upgrade-runtime
+```

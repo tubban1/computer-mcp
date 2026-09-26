@@ -65,6 +65,11 @@ import {
 import type { SessionAdapterId } from "../runtime/sessionStore.js";
 import { getRuntimeIdentity } from "../runtime/runtimeIdentity.js";
 import { runtimeLifecycle } from "../runtime/runtimeLifecycle.js";
+import {
+  getStateMigrationRegistry,
+  getStateSchemaStatus,
+  migrateStateSchema,
+} from "../runtime/stateSchema.js";
 import { currentExecutionContext } from "../runtime/executionContext.js";
 import {
   embedTexts,
@@ -239,6 +244,18 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     },
   },
   "runtime.control": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.state": {
     skillVersion: "0.1.0",
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
@@ -468,6 +485,12 @@ function skillIsReadOnlyForLifecycle(
   const operation = skillOperation(args);
   if (skillId === "runtime.control") return true;
   if (
+    skillId === "runtime.state" &&
+    ["status", "plan"].includes(operation || "status")
+  ) {
+    return true;
+  }
+  if (
     skillId === "runtime.workspace" &&
     [
       "status",
@@ -500,6 +523,7 @@ function skillAllowedDuringDrain(
 ): boolean {
   if (skillId === "runtime.control") return true;
   const operation = skillOperation(args);
+  if (skillId === "runtime.state") return true;
   if (
     skillId === "runtime.workspace" &&
     [
@@ -961,6 +985,15 @@ const CONTROL_CONTRACT: SkillContract = {
   riskLevel: "high",
   idempotent: false,
   sideEffects: ["runtime_lifecycle_transition"],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [],
+};
+
+const STATE_SCHEMA_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: true,
+  sideEffects: ["runtime_state_schema_migration_when_requested"],
   requiresVerification: true,
   retryPolicy: "manual",
   resources: [],
@@ -1789,6 +1822,63 @@ const skills: SkillDefinition[] = [
 
       throw new Error(
         'runtime.control op must be "status", "drain", "wait", or "resume".',
+      );
+    },
+  },
+  {
+    id: "runtime.state",
+    domain: "runtime",
+    description:
+      "Inspect the durable Runtime state schema, plan compatible migrations, or apply an explicitly confirmed auto-safe migration while the Runtime is draining.",
+    keywords: [
+      "state schema",
+      "migration",
+      "durable state",
+      "upgrade state",
+      "schema version",
+      "状态版本",
+      "状态迁移",
+      "升级迁移",
+    ],
+    contract: STATE_SCHEMA_CONTRACT,
+    inputs: {
+      op: "status | plan | migrate. Default: status.",
+      confirm:
+        "Required true for migrate. Migration is accepted only while Runtime lifecycle is DRAINING.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "status",
+      requiresDrainForMigration: true,
+      onlyAutoSafeRollbackCompatibleMigrations: true,
+      primitiveAbiUnchanged: true,
+    }),
+    run: async (args) => {
+      const operation = skillOperation(args) || "status";
+      if (operation === "status") {
+        return await getStateSchemaStatus();
+      }
+      if (operation === "plan") {
+        return {
+          status: await getStateSchemaStatus(),
+          registry: getStateMigrationRegistry(),
+        };
+      }
+      if (operation === "migrate") {
+        if (!runtimeLifecycle.isDraining()) {
+          throw new Error(
+            "STATE_MIGRATION_REQUIRES_DRAIN: Runtime must be draining before durable state migration.",
+          );
+        }
+        if (!optionalBoolean(args, "confirm", false)) {
+          throw new Error(
+            "STATE_MIGRATION_CONFIRM_REQUIRED: migrate requires confirm=true.",
+          );
+        }
+        return await migrateStateSchema({ confirm: true });
+      }
+
+      throw new Error(
+        'runtime.state op must be "status", "plan", or "migrate".',
       );
     },
   },
@@ -3244,6 +3334,8 @@ export async function getCapabilityManifest(goal = "") {
         "v0.9.10 persistent low-interruption WeChat endpoint with background window OCR, focus restoration, and crash-safe send receipts",
       browserSessionModel:
         "persistent browser profile + exact conversation URL + crash-safe pending-send receipt",
+      durableStateSchema:
+        "v0.9.14 global state manifest + governed migration registry + crash journal",
       dependencyGraph: "v0.7",
       providerRouter: "v0.6",
       providers: "v0.5",

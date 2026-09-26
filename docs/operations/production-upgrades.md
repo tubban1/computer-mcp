@@ -1,6 +1,6 @@
 # Production Upgrades
 
-AgentOS Runtime v0.9.13 adds a graceful production upgrade coordinator.
+AgentOS Runtime v0.9.13 added the graceful production upgrade coordinator. v0.9.14 extends it with explicit durable-state schema validation and candidate-driven migration.
 
 Use the normal installer for the first production installation:
 
@@ -32,6 +32,11 @@ candidate health + compatibility check
 old Runtime: runtime.control drain
         ↓
 old Runtime: runtime.control wait
+        ↓
+candidate: runtime.state migrate
+(only when plan is auto-safe + rollback-compatible)
+        ↓
+verify candidate state schema
         ↓
 stop candidate
         ↓
@@ -124,9 +129,27 @@ Long-lived Task/process state survives because it is stored outside the process.
 
 ## State migrations
 
-v0.9.13 candidate preflight verifies that the new code can load the current state safely. It does **not** perform incompatible persistent-state migration.
+v0.9.14 adds the [Runtime Durable State Schema](../specifications/state-schema.md).
 
-A versioned state schema and migration registry are a separate 1.0 hardening milestone.
+Candidate health reports the current durable-state schema before the active Runtime is drained. The upgrade is allowed to continue only when the candidate can read the state and any required automatic migration path is both:
+
+- auto-safe
+- rollback-compatible
+
+The old Runtime is drained **before** state migration starts.
+
+If migration is required, the coordinator invokes the candidate through its normal MCP Skill surface:
+
+```text
+skill_run
+  → runtime.state migrate
+```
+
+with explicit confirmation. The candidate then verifies that the state reached its current native schema before cutover.
+
+The first migration, schema 0 → 1, only creates the schema manifest. It does not rewrite existing durable stores.
+
+Future incompatible migrations are not automatically forced through this path. They require their own checkpoint/rollback policy.
 
 ## Verification
 
@@ -139,5 +162,8 @@ The verifier starts two isolated Production-mode Runtime processes on alternate 
 - normal Runtime starts RUNNING with background controllers
 - candidate starts DRAINING without background controllers
 - candidate health uses the same state root
+- candidate sees legacy state and plans a safe migration
 - MCP `runtime.control` status/drain/wait/resume
+- candidate `runtime.state migrate` runs only after the old Runtime drains
+- migrated candidate state verifies before cutover
 - upgrade/install shell syntax

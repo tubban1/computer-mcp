@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.13",
+  "version": "0.9.14",
   "private": true,
   "type": "module",
   "scripts": {
@@ -25,6 +25,7 @@
     "verify:concurrency": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-concurrency.ts",
     "verify:production-runtime": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-production-runtime.ts",
     "verify:drain-handoff": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-drain-handoff.ts",
+    "verify:state-schema": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-state-schema.ts",
     "verify:upgrade-runtime": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-upgrade-runtime.ts",
     "install:production": "bash scripts/install-production-runtime.sh",
     "upgrade:production": "bash scripts/upgrade-production-runtime.sh",
