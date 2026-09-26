@@ -2,30 +2,37 @@
 
 A personal Computer MCP runtime for ChatGPT with pluggable providers for filesystem, shell, Git, transactions, browser automation, and macOS desktop control.
 
-## v0.6 — Provider Router + Batch Orchestrator
+## v0.7 — Dependency Graph + Parallel Orchestration
 
-v0.6 adds a compact routing layer on top of the existing provider tools so an agent does not have to choose among dozens of low-level MCP tools for every step.
+v0.7 adds a dependency-aware scheduler on top of the v0.6 Provider Router.
 
-New tools:
+New tool:
 
-- `router_catalog`
-- `computer_action`
-- `computer_batch`
+- `computer_graph`
 
-The existing provider-specific tools remain available for compatibility and precise control.
+The existing `computer_action`, `computer_batch`, and all provider-specific tools remain available.
 
-## Why the router exists
+## Why a graph scheduler
 
-The provider layer in v0.5 made capabilities modular, but a multi-step task could still require many MCP round trips:
+v0.6 batches actions into one MCP call, but executes them sequentially:
 
 ```text
-browser_open
-→ browser_snapshot
-→ browser_screenshot
-→ desktop_frontmost_app
+A → B → C → D
 ```
 
-With v0.6 the same work can be sent in one call:
+v0.7 can express dependencies and run independent, parallel-safe work concurrently:
+
+```text
+             ┌→ browser.snapshot ─────┐
+browser.open ├→ browser.screenshot ───┼→ browser.close
+             └→ desktop.frontmost_app ┘
+```
+
+The agent still sends one MCP call, while computer-mcp schedules the internal work.
+
+## computer_graph
+
+Example:
 
 ```json
 {
@@ -38,113 +45,150 @@ With v0.6 the same work can be sent in one call:
     {
       "id": "read",
       "action": "browser.snapshot",
+      "depends_on": ["open"],
       "args": { "max_chars": 4000 }
     },
     {
       "id": "shot",
       "action": "browser.screenshot",
+      "depends_on": ["open"],
       "args": { "path": "/allowed/path/example.png" }
     },
     {
       "id": "front",
-      "action": "desktop.frontmost_app"
+      "action": "desktop.frontmost_app",
+      "depends_on": ["open"]
+    },
+    {
+      "id": "close",
+      "action": "browser.close",
+      "depends_on": ["read", "shot", "front"]
     }
-  ]
+  ],
+  "max_concurrency": 4
 }
 ```
 
-This reduces model/tool orchestration latency and keeps provider routing inside computer-mcp.
+After `open`, the `read`, `shot`, and `front` branches are eligible to run in the same wave.
 
-## Routed providers
+## Automatic dependencies from references
 
-The router currently covers:
-
-- Provider registry
-- Filesystem
-- Shell and managed processes
-- Git
-- Transactions
-- Browser
-- macOS Desktop
-
-Call:
-
-```text
-router_catalog
-```
-
-to discover supported routed action names and their side-effect metadata.
-
-## References between batch steps
-
-Later steps can reuse results from earlier steps with:
-
-```json
-{ "$ref": "stepId.field" }
-```
-
-Example:
+A `$ref` automatically creates a dependency, so this:
 
 ```json
 {
-  "steps": [
-    {
-      "id": "tx",
-      "action": "tx.begin",
-      "args": {
-        "cwd": "/allowed/repo",
-        "label": "safe edit"
-      }
-    },
-    {
-      "id": "status",
-      "action": "tx.status",
-      "args": {
-        "transaction_id": { "$ref": "tx.id" }
-      }
-    }
-  ]
+  "id": "status",
+  "action": "tx.status",
+  "args": {
+    "transaction_id": { "$ref": "tx.id" }
+  }
 }
 ```
 
+implicitly depends on the `tx` step. You do not have to repeat `depends_on: ["tx"]`.
+
+## Safety-aware parallelism
+
+Not every action is parallelized.
+
+Examples marked parallel-safe include:
+
+- filesystem reads/searches
+- Git status/diff/log
+- process output reads
+- transaction status/list
+- browser snapshot/screenshot/tab listing
+- desktop frontmost-app and screenshot reads
+
+State-changing actions are serialized, including:
+
+- file writes/deletes
+- shell execution
+- Git add/commit/pull/push
+- transaction begin/rollback/complete
+- browser navigation/click/type/close
+- desktop click/type/key/app activation
+
+This favors deterministic behavior over maximum concurrency.
+
+## Failure behavior
+
+Each graph step ends in one of:
+
+```text
+succeeded
+failed
+skipped
+```
+
+A step whose dependency fails is skipped automatically.
+
+With:
+
+```text
+fail_fast=true
+```
+
+the scheduler stops starting new work after the first failure.
+
+With:
+
+```text
+fail_fast=false
+```
+
+independent branches can continue, while descendants of the failed branch are skipped.
+
+## Concurrency
+
+`max_concurrency` is bounded from 1 to 8 and defaults to 4.
+
+Unsafe actions always execute alone. A wave contains multiple actions only when all selected actions are marked parallel-safe.
+
 ## Dry run
 
-Both routing entry points support validation before execution.
-
-For one action:
+Use:
 
 ```text
-computer_action(..., dry_run=true)
+computer_graph(..., dry_run=true)
 ```
 
-For a batch:
+to validate:
 
-```text
-computer_batch(..., dry_run=true)
-```
+- step IDs
+- routed action names
+- explicit dependencies
+- implicit `$ref` dependencies
+- dependency cycles
+- literal argument schemas
+- parallel-safety classification
 
-Dry-run mode validates action names, provider routing, and argument schemas without executing side effects. References that depend on runtime results (for example `{"$ref":"tx.id"}`) are resolved during real execution rather than dry-run.
+Arguments containing runtime `$ref` values are schema-validated after the references resolve during real execution.
 
-## Error behavior
+## Execution metrics
 
-`computer_batch` defaults to:
+The graph response includes:
 
-```text
-stop_on_error=true
-```
+- wall-clock duration
+- summed step duration
+- execution waves
+- per-step duration
+- parallel vs serial waves
+- a `parallelEfficiency` ratio
 
-If one step fails, later steps do not run. Set it to false only when independent steps should continue.
+A ratio above 1 means work overlapped in time.
 
-This batch mechanism is an orchestration layer, not an automatic transaction boundary. For recoverable code changes, continue to use the transaction provider:
+## v0.6 routing layer
 
-```text
-tx.begin
-...
-tx.rollback
-tx.complete
-```
+The compact routing tools remain:
 
-## Provider architecture
+- `router_catalog`
+- `computer_action`
+- `computer_batch`
+
+Use `computer_batch` for simple ordered workflows and `computer_graph` when branches can run independently.
+
+## Providers
 
 Built-in providers:
 
@@ -155,70 +199,36 @@ Built-in providers:
 - `browser`
 - `desktop`
 
-Use:
-
-```text
-provider_status
-```
-
-to see availability, enablement, and provider details.
+Use `provider_status` to inspect provider availability.
 
 ## Browser provider
 
-The browser provider uses `playwright-core` with an existing Chromium-based browser. On Apple Silicon Macs it detects when computer-mcp itself is running under Rosetta and launches Chrome natively as arm64 for more reliable CDP automation.
+The browser provider uses `playwright-core` with an existing Chromium-based browser. On Apple Silicon Macs, it detects Rosetta and launches Chrome natively as arm64.
 
-Tools include:
-
-- `browser_open`
-- `browser_list_tabs`
-- `browser_use_tab`
-- `browser_snapshot`
-- `browser_click`
-- `browser_type`
-- `browser_screenshot`
-- `browser_close`
-
-Enable it with:
+Enable:
 
 ```env
 ALLOW_BROWSER=true
 BROWSER_HEADLESS=false
 ```
 
-By default, the managed browser uses an isolated runtime profile under:
-
-```text
-~/.computer-mcp/browser-profiles/runtime-<pid>
-```
-
-Set `BROWSER_PROFILE_DIR` if you want persistent browser login state.
-
-Web page content is untrusted input. Browser interaction tools are marked open-world and potentially destructive where appropriate.
+Web page content is untrusted input. Browser interactions remain subject to the user's intent and permission boundaries.
 
 ## Desktop provider
 
-The desktop provider currently targets macOS and uses native `osascript` / `screencapture`.
+The current desktop provider targets macOS with native `osascript` and `screencapture`.
 
-Tools include:
-
-- `desktop_frontmost_app`
-- `desktop_open_app`
-- `desktop_click`
-- `desktop_type`
-- `desktop_key`
-- `desktop_screenshot`
-
-Enable it with:
+Enable:
 
 ```env
 ALLOW_GUI=true
 ```
 
-macOS may require Accessibility permission for keyboard/mouse actions and Screen Recording permission for screenshots.
+macOS may require Accessibility and Screen Recording permissions.
 
 ## Tool count
 
-v0.6 exposes **54 MCP tools**, all with MCP annotations.
+v0.7 exposes **55 MCP tools**, all with MCP annotations.
 
 ## Example configuration
 
@@ -262,10 +272,11 @@ After changing tool definitions, restart the local server and tunnel client, the
 
 ## Roadmap
 
-The provider/router boundary is intended to support:
+The provider/router/graph boundary is intended to support:
 
-- task-level rollback policies
-- higher-level workflow templates
+- workflow templates
+- persistent task state and resumability
+- per-provider resource locks
 - SSH and Docker providers
 - Windows/Linux desktop providers
 - remote VM providers
