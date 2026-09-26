@@ -65,6 +65,7 @@ import {
 import {
   cancelPersistentTask,
   createPersistentTask,
+  deletePersistentTask,
   getPersistentTaskStatus,
   listPersistentTasks,
   requestTaskPause,
@@ -1504,6 +1505,26 @@ function createServer() {
             },
           ),
         );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_delete",
+    "Delete a persisted task record after it is no longer needed. Active tasks cannot be deleted.",
+    { task_id: z.string() },
+    {
+      title: "Delete Persistent Task",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ task_id }) => {
+      try {
+        return ok(await deletePersistentTask(task_id));
       } catch (error) {
         return fail(error);
       }
