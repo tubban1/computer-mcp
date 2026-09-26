@@ -110,8 +110,8 @@ fi
 
 export AGENTOS_RUNTIME_MODE=production
 export AGENTOS_STATE_ROOT="${AGENTOS_PRODUCTION_STATE_ROOT:-$STATE_ROOT}"
-RELEASE_ROOT="$(cd "$(dirname "$0")" && pwd)"
-exec "$NODE_BIN" "$RELEASE_ROOT/dist/server.js"
+RELEASE_ROOT="\$(cd "\$(dirname "\$0")" && pwd)"
+exec "$NODE_BIN" "\$RELEASE_ROOT/dist/server.js"
 EOF
 chmod 700 "$TMP_RELEASE/run.sh"
 

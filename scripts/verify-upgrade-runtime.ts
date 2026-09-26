@@ -249,6 +249,21 @@ try {
       ),
   );
 
+  for (const script of [
+    "scripts/install-production-runtime.sh",
+    "scripts/upgrade-production-runtime.sh",
+  ]) {
+    const source = await fs.readFile(path.join(root, script), "utf8");
+    assert.match(
+      source,
+      /RELEASE_ROOT="\\\$\(cd "\\\$\(dirname "\\\$0"\)" && pwd\)"/,
+    );
+    assert.match(
+      source,
+      /exec "\$NODE_BIN" "\\\$RELEASE_ROOT\/dist\/server\.js"/,
+    );
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -271,6 +286,7 @@ try {
         resume: true,
         upgradeScriptSyntax: true,
         drainTimeoutValidation: true,
+        releaseRunTemplateEscaped: true,
         installScriptSyntax: true,
       },
       null,
