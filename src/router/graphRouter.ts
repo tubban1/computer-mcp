@@ -328,10 +328,10 @@ export async function executeActionGraph(
       break;
     }
 
-    const firstUnsafe = ready.find((step) => !step.parallelSafe);
-    const wave = firstUnsafe
-      ? [firstUnsafe]
-      : ready.filter((step) => step.parallelSafe).slice(0, maxConcurrency);
+    const firstReady = ready[0]!;
+    const wave = firstReady.parallelSafe
+      ? ready.filter((step) => step.parallelSafe).slice(0, maxConcurrency)
+      : [firstReady];
 
     const waveStartedAt = Date.now();
     for (const step of wave) states.set(step.id, "running");
