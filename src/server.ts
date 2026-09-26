@@ -58,6 +58,10 @@ import {
   getRouterCatalog,
   validateRoutedAction,
 } from "./router/actionRouter.js";
+import {
+  executeActionGraph,
+  planActionGraph,
+} from "./router/graphRouter.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -115,7 +119,7 @@ function fail(error: unknown) {
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.6.0",
+    version: "0.7.0",
   });
 
   server.tool(
@@ -780,7 +784,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.6.0",
+          version: "0.7.0",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -1394,6 +1398,61 @@ function createServer() {
     },
   );
 
+
+  server.tool(
+    "computer_graph",
+    "Execute a dependency graph of provider-routed actions with bounded parallelism. Use depends_on for explicit dependencies; $ref arguments automatically create dependencies. Read-only/parallel-safe actions may run concurrently, while state-changing actions are serialized. Set dry_run=true to validate topology and routing without executing.",
+    {
+      steps: z.array(
+        z.object({
+          id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+          action: z.string().min(1),
+          args: z.record(z.unknown()).optional(),
+          depends_on: z.array(z.string()).optional(),
+        }),
+      ).min(1).max(50),
+      max_concurrency: z.number().int().min(1).max(8).optional(),
+      fail_fast: z.boolean().optional(),
+      dry_run: z.boolean().optional(),
+    },
+    {
+      title: "Computer Graph",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ steps, max_concurrency, fail_fast, dry_run }) => {
+      try {
+        const graphSteps = steps.map((step) => ({
+          id: step.id,
+          action: step.action,
+          args: step.args,
+          dependsOn: step.depends_on,
+        }));
+
+        if (dry_run) {
+          return ok({
+            dryRun: true,
+            maxConcurrency: max_concurrency ?? 4,
+            failFast: fail_fast ?? true,
+            plan: planActionGraph(graphSteps),
+          });
+        }
+
+        return ok(
+          await executeActionGraph(graphSteps, {
+            maxConcurrency: max_concurrency ?? 4,
+            failFast: fail_fast ?? true,
+            dryRun: false,
+          }),
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
   return server;
 }
 
@@ -1461,7 +1520,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.6.0",
+    version: "0.7.0",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1477,5 +1536,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.6.0 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.7.0 listening on http://127.0.0.1:${port}/mcp`);
 });
