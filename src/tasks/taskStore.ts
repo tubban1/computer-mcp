@@ -31,6 +31,11 @@ export interface PersistentTaskStep {
   args: Record<string, unknown>;
   dependsOn: string[];
   parallelSafe: boolean;
+  retryPolicy?: "automatic" | "manual" | "never";
+  riskLevel?: "low" | "medium" | "high" | "critical";
+  sideEffects?: string[];
+  requiresVerification?: boolean;
+  resources?: Array<{ key: string; mode: "shared" | "exclusive" }>;
   state: PersistentStepState;
   attempts: number;
   startedAt?: string;

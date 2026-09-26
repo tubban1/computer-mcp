@@ -4,7 +4,11 @@ export type ProviderCapability =
   | "git"
   | "transaction"
   | "browser"
-  | "desktop";
+  | "desktop"
+  | "accessibility"
+  | "ui-tree"
+  | "region-screenshot"
+  | "clipboard";
 
 export interface ProviderStatus {
   id: string;

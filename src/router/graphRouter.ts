@@ -3,6 +3,10 @@ import {
   getRouterCatalog,
   validateRoutedAction,
 } from "./actionRouter.js";
+import {
+  getActionContract,
+  summarizeActionContract,
+} from "../runtime/actionContracts.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -15,34 +19,15 @@ export type GraphStep = {
 
 type StepState = "pending" | "running" | "succeeded" | "failed" | "skipped";
 
-const PARALLEL_SAFE_ACTIONS = new Set([
-  "provider.status",
-  "fs.list",
-  "fs.tree",
-  "fs.read",
-  "fs.read_many",
-  "fs.info",
-  "fs.search",
-  "shell.processes",
-  "shell.output",
-  "git.status",
-  "git.diff",
-  "git.log",
-  "tx.status",
-  "tx.list",
-  "browser.tabs",
-  "browser.snapshot",
-  "browser.screenshot",
-  "desktop.frontmost_app",
-  "desktop.screenshot",
-]);
+export function isActionParallelSafe(
+  action: string,
+  args: JsonObject = {},
+): boolean {
+  return getActionContract(action, args).parallelSafe;
+}
 
 function actionExists(action: string): boolean {
   return getRouterCatalog().some((item) => item.action === action);
-}
-
-export function isActionParallelSafe(action: string): boolean {
-  return PARALLEL_SAFE_ACTIONS.has(action);
 }
 
 function collectReferences(value: unknown, refs = new Set<string>()): Set<string> {
@@ -163,7 +148,7 @@ function normalizeSteps(steps: GraphStep[]): NormalizedStep[] {
       dependsOn: [...new Set([...explicitDependsOn, ...referenceDependsOn])],
       explicitDependsOn,
       referenceDependsOn,
-      parallelSafe: isActionParallelSafe(step.action),
+      parallelSafe: isActionParallelSafe(step.action, step.args ?? {}),
     };
   });
 }
@@ -229,6 +214,7 @@ export function planActionGraph(steps: GraphStep[]) {
       explicitDependsOn: step.explicitDependsOn,
       referenceDependsOn: step.referenceDependsOn,
       parallelSafe: step.parallelSafe,
+      contract: summarizeActionContract(getActionContract(step.action, step.args)),
       validation,
       validationError,
     };

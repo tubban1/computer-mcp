@@ -1,0 +1,755 @@
+import path from "node:path";
+import {
+  assertAllowedExistingPath,
+  assertAllowedTargetPath,
+} from "../security/pathGuard.js";
+import { executeRoutedAction } from "../router/actionRouter.js";
+import { resourceArbiter } from "../runtime/resourceArbiter.js";
+import { getPrimitiveCatalog } from "../primitives/primitiveRuntime.js";
+import { getProviderStatuses } from "../providers/registry.js";
+
+type JsonObject = Record<string, unknown>;
+
+type SkillContract = {
+  riskLevel: "low" | "medium" | "high" | "critical";
+  idempotent: boolean;
+  sideEffects: string[];
+  requiresVerification: boolean;
+  retryPolicy: "automatic" | "manual" | "never";
+  resources: Array<{ key: string; mode: "shared" | "exclusive" }>;
+};
+
+type SkillDefinition = {
+  id: string;
+  domain: string;
+  description: string;
+  keywords: string[];
+  contract: SkillContract;
+  inputs: Record<string, string>;
+  run: (args: JsonObject) => Promise<unknown>;
+  dryRunPlan: (args: JsonObject) => unknown;
+};
+
+const sleep = async (ms: number) =>
+  await new Promise((resolve) => setTimeout(resolve, ms));
+
+function requiredText(args: JsonObject, key: string): string {
+  const value = args[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Missing required skill argument "${key}".`);
+  }
+  return value.trim();
+}
+
+function optionalBoolean(args: JsonObject, key: string, fallback: boolean): boolean {
+  const value = args[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function shellQuote(value: string): string {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
+}
+
+async function call(
+  action: string,
+  args: JsonObject,
+  bypassResourceKeys: string[] = [],
+) {
+  return (
+    await executeRoutedAction(action, args, {
+      bypassResourceKeys,
+    })
+  ).result;
+}
+
+async function withSkillResources<T>(
+  skill: string,
+  contract: SkillContract,
+  operation: (heldKeys: string[]) => Promise<T>,
+): Promise<T> {
+  const lease = await resourceArbiter.acquire(skill, contract.resources);
+  const heldKeys = lease.resources.map((item) => item.key);
+  try {
+    return await operation(heldKeys);
+  } finally {
+    lease.release();
+  }
+}
+
+const WECHAT_READ_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: true,
+  sideEffects: ["window_focus"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [
+    { key: "desktop.focus", mode: "exclusive" },
+    { key: "desktop.accessibility", mode: "shared" },
+  ],
+};
+
+const WECHAT_SEND_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: ["external_message", "window_focus", "keyboard_input"],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [
+    { key: "desktop.focus", mode: "exclusive" },
+    { key: "desktop.input", mode: "exclusive" },
+    { key: "desktop.accessibility", mode: "exclusive" },
+  ],
+};
+
+const BROWSER_PUBLISH_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: ["external_publish", "web_form_mutation"],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [{ key: "browser.session", mode: "exclusive" }],
+};
+
+const EMAIL_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: ["external_message", "web_form_mutation"],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [{ key: "browser.session", mode: "exclusive" }],
+};
+
+const MEDIA_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: true,
+  sideEffects: ["file_creation"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [{ key: "shell", mode: "exclusive" }],
+};
+
+const skills: SkillDefinition[] = [
+  {
+    id: "wechat.read",
+    domain: "communication",
+    description:
+      "Focus WeChat and read its current Accessibility tree, optionally capturing the window region.",
+    keywords: ["wechat", "微信", "消息", "聊天", "read message"],
+    contract: WECHAT_READ_CONTRACT,
+    inputs: {
+      max_elements: "Maximum accessibility elements to scan (default 700).",
+      screenshot_path: "Optional allowed output path for a WeChat window screenshot.",
+    },
+    dryRunPlan: (args) => ({
+      steps: [
+        { action: "desktop.open_app", args: { app_name: "WeChat" } },
+        {
+          action: "desktop.ui_tree",
+          args: { app_name: "WeChat", max_elements: args.max_elements ?? 700 },
+        },
+        ...(typeof args.screenshot_path === "string"
+          ? [
+              { action: "desktop.window_bounds", args: { app_name: "WeChat" } },
+              { action: "desktop.screenshot_region", args: "derived from window bounds" },
+            ]
+          : []),
+      ],
+    }),
+    run: async (args) =>
+      await withSkillResources("wechat.read", WECHAT_READ_CONTRACT, async (held) => {
+        await call("desktop.open_app", { app_name: "WeChat" }, held);
+        await sleep(350);
+        const tree = (await call(
+          "desktop.ui_tree",
+          {
+            app_name: "WeChat",
+            max_elements:
+              typeof args.max_elements === "number" ? args.max_elements : 700,
+          },
+          held,
+        )) as any;
+
+        let screenshot: unknown = null;
+        if (typeof args.screenshot_path === "string" && args.screenshot_path.trim()) {
+          const bounds = (await call(
+            "desktop.window_bounds",
+            { app_name: "WeChat" },
+            held,
+          )) as any;
+          screenshot = await call(
+            "desktop.screenshot_region",
+            {
+              path: args.screenshot_path,
+              x: bounds.x,
+              y: bounds.y,
+              width: bounds.width,
+              height: bounds.height,
+            },
+            held,
+          );
+        }
+
+        const textual = Array.isArray(tree?.elements)
+          ? tree.elements
+              .filter(
+                (item: any) =>
+                  item?.name || item?.value || item?.description,
+              )
+              .slice(0, 180)
+          : [];
+
+        return {
+          app: "WeChat",
+          textualElements: textual,
+          scanned: tree?.elements?.length ?? 0,
+          screenshot,
+          note:
+            "Accessibility output is deterministic UI data. If message text is not exposed by WeChat, use the returned screenshot with a vision-capable client.",
+        };
+      }),
+  },
+  {
+    id: "wechat.send",
+    domain: "communication",
+    description:
+      "Navigate to a WeChat contact, verify an exact accessibility match, and optionally send a message.",
+    keywords: ["wechat", "微信", "回复", "发送消息", "reply"],
+    contract: WECHAT_SEND_CONTRACT,
+    inputs: {
+      contact_name: "Exact WeChat contact name.",
+      message: "Message text.",
+      send: "Must be true to physically type and send; default false prepares and verifies only.",
+    },
+    dryRunPlan: (args) => ({
+      steps: [
+        "focus WeChat",
+        "Cmd+1",
+        "Cmd+F",
+        `search contact: ${String(args.contact_name ?? "")}`,
+        "verify exact accessibility text match",
+        optionalBoolean(args, "send", false)
+          ? "focus message area, paste message, press Return"
+          : "stop before typing/sending",
+      ],
+    }),
+    run: async (args) => {
+      const contactName = requiredText(args, "contact_name");
+      const message = requiredText(args, "message");
+      const shouldSend = optionalBoolean(args, "send", false);
+
+      return await withSkillResources("wechat.send", WECHAT_SEND_CONTRACT, async (held) => {
+        await call("desktop.open_app", { app_name: "WeChat" }, held);
+        await sleep(300);
+        await call(
+          "desktop.key",
+          { key: "1", modifiers: ["command"] },
+          held,
+        );
+        await sleep(250);
+        await call(
+          "desktop.key",
+          { key: "f", modifiers: ["command"] },
+          held,
+        );
+        await sleep(250);
+        await call("desktop.type", { text: contactName }, held);
+        await sleep(700);
+        await call("desktop.key", { key: "return" }, held);
+        await sleep(600);
+
+        const bounds = (await call(
+          "desktop.window_bounds",
+          { app_name: "WeChat" },
+          held,
+        )) as any;
+        const verification = (await call(
+          "desktop.ui_find",
+          {
+            app_name: "WeChat",
+            query: contactName,
+            max_results: 30,
+            max_elements: 800,
+          },
+          held,
+        )) as any;
+
+        const exact = Array.isArray(verification?.matches)
+          ? verification.matches.filter((item: any) =>
+              [item?.name, item?.value, item?.description]
+                .filter((value: unknown) => typeof value === "string")
+                .some(
+                  (value: string) =>
+                    value.trim().toLowerCase() === contactName.toLowerCase(),
+                ),
+            )
+          : [];
+        const headerMatches = exact.filter((item: any) => {
+          if (typeof item?.x !== "number" || typeof item?.y !== "number") return false;
+          const centerX = item.x + Math.max(Number(item.width) || 0, 1) / 2;
+          const centerY = item.y + Math.max(Number(item.height) || 0, 1) / 2;
+          return (
+            centerX >= bounds.x + bounds.width * 0.4 &&
+            centerY <= bounds.y + bounds.height * 0.28
+          );
+        });
+
+        if (headerMatches.length === 0) {
+          throw new Error(
+            `WeChat active-chat verification failed for "${contactName}". An exact name was not found in the main chat header region; refusing to type or send.`,
+          );
+        }
+
+        if (!shouldSend) {
+          return {
+            prepared: true,
+            sent: false,
+            contactName,
+            verification: headerMatches.slice(0, 5),
+            note: "The active chat header was verified. Set send=true only when you want to physically send the message.",
+          };
+        }
+
+        const inputX = Math.round(bounds.x + bounds.width * 0.72);
+        const inputY = Math.round(bounds.y + bounds.height * 0.84);
+        await call("desktop.click", { x: inputX, y: inputY }, held);
+        await sleep(150);
+        await call("desktop.type", { text: message }, held);
+        await sleep(250);
+        await call("desktop.key", { key: "return" }, held);
+
+        return {
+          prepared: true,
+          sent: true,
+          contactName,
+          characters: message.length,
+          verification: headerMatches.slice(0, 5),
+        };
+      });
+    },
+  },
+  {
+    id: "xhs.publish",
+    domain: "publishing",
+    description:
+      "Prepare or publish a Xiaohongshu web note using the managed browser and local asset upload.",
+    keywords: ["xhs", "xiaohongshu", "小红书", "笔记", "publish"],
+    contract: BROWSER_PUBLISH_CONTRACT,
+    inputs: {
+      title: "Note title.",
+      content: "Note body.",
+      images: "Array of local image paths inside ALLOWED_DIRECTORIES.",
+      publish: "Must be true to click the final publish button; default false.",
+      headless: "Run managed Chrome headlessly; default true.",
+    },
+    dryRunPlan: (args) => ({
+      url: "https://creator.xiaohongshu.com/publish/publish",
+      headless: optionalBoolean(args, "headless", true),
+      uploadCount: Array.isArray(args.images) ? args.images.length : 0,
+      finalPublishClick: optionalBoolean(args, "publish", false),
+    }),
+    run: async (args) => {
+      const title = requiredText(args, "title");
+      const content = requiredText(args, "content");
+      const images = Array.isArray(args.images)
+        ? args.images.filter((item): item is string => typeof item === "string")
+        : [];
+      const publish = optionalBoolean(args, "publish", false);
+      const headless = optionalBoolean(args, "headless", true);
+
+      return await withSkillResources("xhs.publish", BROWSER_PUBLISH_CONTRACT, async (held) => {
+        await call(
+          "browser.open",
+          {
+            url: "https://creator.xiaohongshu.com/publish/publish",
+            wait_until: "domcontentloaded",
+            headless,
+          },
+          held,
+        );
+        await sleep(1200);
+
+        if (images.length > 0) {
+          await call(
+            "browser.upload",
+            {
+              selector: 'input[type="file"]',
+              files: images,
+            },
+            held,
+          );
+          await sleep(1000);
+        }
+
+        await call(
+          "browser.type",
+          {
+            selector:
+              'input[placeholder*="标题"], input[placeholder*="title" i], input[type="text"]',
+            text: title,
+          },
+          held,
+        );
+
+        await call(
+          "browser.type",
+          {
+            selector:
+              'div[contenteditable="true"], textarea[placeholder*="正文"], textarea',
+            text: content,
+          },
+          held,
+        );
+
+        if (!publish) {
+          return {
+            prepared: true,
+            published: false,
+            title,
+            imageCount: images.length,
+            headless,
+            note: "Form prepared but final publish button was not clicked.",
+          };
+        }
+
+        const selectors = [
+          'button:has-text("发布")',
+          'text="发布"',
+          'button:has-text("Publish")',
+          'button:has-text("Veröffentlichen")',
+        ];
+        let lastError = "";
+        let clicked = false;
+        for (const selector of selectors) {
+          try {
+            await call("browser.click", { selector }, held);
+            clicked = true;
+            break;
+          } catch (error) {
+            lastError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        if (!clicked) {
+          throw new Error(
+            `Could not locate the Xiaohongshu publish button. ${lastError}`,
+          );
+        }
+
+        await sleep(1200);
+        const snapshot = await call(
+          "browser.snapshot",
+          { max_chars: 6000 },
+          held,
+        );
+        return {
+          prepared: true,
+          published: true,
+          title,
+          imageCount: images.length,
+          headless,
+          snapshot,
+        };
+      });
+    },
+  },
+  {
+    id: "email.compose",
+    domain: "communication",
+    description:
+      "Prepare or send a Gmail web message through the managed browser.",
+    keywords: ["email", "mail", "gmail", "邮件", "邮箱", "回复邮件"],
+    contract: EMAIL_CONTRACT,
+    inputs: {
+      to: "Recipient email address.",
+      subject: "Message subject.",
+      body: "Message body.",
+      send: "Must be true to click Send; default false leaves Gmail draft open.",
+      headless: "Run managed Chrome headlessly; default true.",
+    },
+    dryRunPlan: (args) => ({
+      url: "https://mail.google.com/mail/u/0/#inbox?compose=new",
+      recipient: args.to ?? null,
+      finalSendClick: optionalBoolean(args, "send", false),
+      headless: optionalBoolean(args, "headless", true),
+    }),
+    run: async (args) => {
+      const to = requiredText(args, "to");
+      const subject = requiredText(args, "subject");
+      const body = requiredText(args, "body");
+      const send = optionalBoolean(args, "send", false);
+      const headless = optionalBoolean(args, "headless", true);
+
+      return await withSkillResources("email.compose", EMAIL_CONTRACT, async (held) => {
+        await call(
+          "browser.open",
+          {
+            url: "https://mail.google.com/mail/u/0/#inbox?compose=new",
+            wait_until: "domcontentloaded",
+            headless,
+          },
+          held,
+        );
+        await sleep(1200);
+
+        await call(
+          "browser.type",
+          {
+            selector:
+              'input[peoplekit-id], input[aria-label^="To"], input[aria-label*="Recipients"], input[role="combobox"]',
+            text: to,
+            submit: true,
+          },
+          held,
+        );
+        await call(
+          "browser.type",
+          {
+            selector: 'input[name="subjectbox"]',
+            text: subject,
+          },
+          held,
+        );
+        await call(
+          "browser.type",
+          {
+            selector:
+              'div[aria-label="Message Body"], div[role="textbox"][contenteditable="true"]',
+            text: body,
+          },
+          held,
+        );
+
+        if (!send) {
+          return {
+            prepared: true,
+            sent: false,
+            to,
+            subject,
+            headless,
+            note: "Gmail draft prepared; final Send action was not triggered.",
+          };
+        }
+
+        const selectors = [
+          '[data-tooltip^="Send"]',
+          '[aria-label^="Send"]',
+          'div[role="button"]:has-text("Send")',
+          'div[role="button"]:has-text("发送")',
+          'div[role="button"]:has-text("Senden")',
+        ];
+
+        let lastError = "";
+        let clicked = false;
+        for (const selector of selectors) {
+          try {
+            await call("browser.click", { selector }, held);
+            clicked = true;
+            break;
+          } catch (error) {
+            lastError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        if (!clicked) {
+          throw new Error(`Could not locate Gmail Send control. ${lastError}`);
+        }
+
+        await sleep(800);
+        return { prepared: true, sent: true, to, subject, headless };
+      });
+    },
+  },
+  {
+    id: "media.transcode",
+    domain: "media",
+    description:
+      "Transcode, trim, compress, crop to vertical/square, or extract audio with FFmpeg.",
+    keywords: ["media", "video", "ffmpeg", "视频", "剪辑", "转码", "压缩"],
+    contract: MEDIA_CONTRACT,
+    inputs: {
+      input_path: "Existing input file inside ALLOWED_DIRECTORIES.",
+      output_path: "Output path inside ALLOWED_DIRECTORIES.",
+      mode: "copy | compress | vertical | square | audio",
+      start_seconds: "Optional trim start.",
+      duration_seconds: "Optional trim duration.",
+    },
+    dryRunPlan: (args) => ({
+      mode: args.mode ?? "compress",
+      input: args.input_path ?? null,
+      output: args.output_path ?? null,
+      engine: "ffmpeg",
+    }),
+    run: async (args) => {
+      const inputPath = await assertAllowedExistingPath(
+        requiredText(args, "input_path"),
+      );
+      const outputPath = await assertAllowedTargetPath(
+        requiredText(args, "output_path"),
+      );
+      const mode =
+        typeof args.mode === "string" ? args.mode.trim().toLowerCase() : "compress";
+      if (!["copy", "compress", "vertical", "square", "audio"].includes(mode)) {
+        throw new Error("Unsupported media mode.");
+      }
+
+      const parent = path.dirname(outputPath);
+      await call("fs.mkdir", { path: parent, recursive: true });
+
+      const prefix: string[] = ["ffmpeg", "-y"];
+      if (typeof args.start_seconds === "number" && args.start_seconds >= 0) {
+        prefix.push("-ss", String(args.start_seconds));
+      }
+      prefix.push("-i", inputPath);
+      if (typeof args.duration_seconds === "number" && args.duration_seconds > 0) {
+        prefix.push("-t", String(args.duration_seconds));
+      }
+
+      if (mode === "copy") {
+        prefix.push("-c", "copy");
+      } else if (mode === "compress") {
+        prefix.push(
+          "-c:v",
+          "libx264",
+          "-crf",
+          "23",
+          "-preset",
+          "medium",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+        );
+      } else if (mode === "vertical") {
+        prefix.push(
+          "-vf",
+          "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+          "-c:v",
+          "libx264",
+          "-crf",
+          "21",
+          "-c:a",
+          "aac",
+        );
+      } else if (mode === "square") {
+        prefix.push(
+          "-vf",
+          "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
+          "-c:v",
+          "libx264",
+          "-crf",
+          "21",
+          "-c:a",
+          "aac",
+        );
+      } else if (mode === "audio") {
+        prefix.push("-vn", "-c:a", "aac", "-b:a", "192k");
+      }
+      prefix.push(outputPath);
+
+      const command = prefix.map(shellQuote).join(" ");
+
+      return await withSkillResources(
+        "media.transcode",
+        MEDIA_CONTRACT,
+        async (held) => {
+          const shellResult = await call(
+            "shell.exec",
+            {
+              command,
+              cwd: parent,
+              timeout_ms: 600000,
+            },
+            held,
+          );
+          return {
+            mode,
+            inputPath,
+            outputPath,
+            command,
+            shellResult,
+          };
+        },
+      );
+    },
+  },
+];
+
+const byId = new Map(skills.map((skill) => [skill.id, skill]));
+
+export function getSkillCatalog() {
+  return skills.map(({ run: _run, dryRunPlan: _dryRunPlan, keywords: _keywords, ...skill }) => skill);
+}
+
+export async function executeSkill(
+  skillId: string,
+  args: JsonObject = {},
+  dryRun = false,
+) {
+  const skill = byId.get(skillId);
+  if (!skill) {
+    throw new Error(
+      `Unknown skill "${skillId}". Call skill_catalog for supported skills.`,
+    );
+  }
+
+  if (dryRun) {
+    return {
+      dryRun: true,
+      skill: skill.id,
+      domain: skill.domain,
+      contract: skill.contract,
+      plan: skill.dryRunPlan(args),
+    };
+  }
+
+  const startedAt = Date.now();
+  const result = await skill.run(args);
+  return {
+    skill: skill.id,
+    domain: skill.domain,
+    contract: skill.contract,
+    durationMs: Date.now() - startedAt,
+    result,
+  };
+}
+
+function skillScore(goal: string, skill: SkillDefinition): number {
+  const normalized = goal.toLowerCase();
+  let score = 0;
+  for (const keyword of skill.keywords) {
+    if (normalized.includes(keyword.toLowerCase())) score += 1;
+  }
+  return score;
+}
+
+export async function getCapabilityManifest(goal = "") {
+  const recommended = [...skills]
+    .map((skill) => ({ skill, score: skillScore(goal, skill) }))
+    .filter((item) => !goal.trim() || item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map(({ skill, score }) => ({
+      id: skill.id,
+      domain: skill.domain,
+      description: skill.description,
+      inputs: skill.inputs,
+      contract: skill.contract,
+      relevanceScore: score,
+    }));
+
+  return {
+    goal: goal || null,
+    architecture: {
+      planner: "ChatGPT",
+      skillRuntime: "v0.9",
+      primitiveAbi: "v0.9",
+      persistentTasks: "v0.8",
+      dependencyGraph: "v0.7",
+      providerRouter: "v0.6",
+      providers: "v0.5",
+    },
+    recommendedSkills: recommended,
+    primitives: getPrimitiveCatalog(),
+    providers: await getProviderStatuses(),
+    guidance:
+      "Prefer a matching skill for known workflows. Use primitives for novel composition and routed actions only for low-level precision.",
+  };
+}

@@ -121,6 +121,11 @@ function summarizeTask(task: PersistentTask, includeResults = false) {
       action: step.action,
       dependsOn: step.dependsOn,
       parallelSafe: step.parallelSafe,
+      retryPolicy: step.retryPolicy ?? (step.parallelSafe ? "automatic" : "manual"),
+      riskLevel: step.riskLevel ?? null,
+      sideEffects: step.sideEffects ?? [],
+      requiresVerification: step.requiresVerification ?? false,
+      resources: step.resources ?? [],
       state: step.state,
       attempts: step.attempts,
       durationMs: step.durationMs ?? null,
@@ -157,24 +162,27 @@ async function recoverInterruptedTask(task: PersistentTask): Promise<PersistentT
     if (step.state !== "running") continue;
 
     recovered = true;
-    if (step.parallelSafe) {
+    const retryPolicy =
+      step.retryPolicy ?? (step.parallelSafe ? "automatic" : "manual");
+
+    if (retryPolicy === "automatic") {
       step.state = "pending";
       step.recoveryNote =
-        "Previous server instance stopped while this parallel-safe step was running; it was reset to pending.";
+        "Previous server instance stopped while this automatically retryable step was running; it was reset to pending.";
       appendTaskEvent(task, {
         type: "step_recovered",
         stepId: step.id,
-        message: `Reset interrupted parallel-safe step ${step.id} to pending.`,
+        message: `Reset interrupted auto-retry step ${step.id} to pending.`,
       });
     } else {
       step.state = "needs_review";
       needsReview = true;
       step.recoveryNote =
-        "Previous server instance stopped during a state-changing step. Explicitly retry or mark it succeeded after checking side effects.";
+        `Previous server instance stopped during a ${retryPolicy}-retry step. Explicitly retry or mark it succeeded after checking side effects.`;
       appendTaskEvent(task, {
         type: "step_needs_review",
         stepId: step.id,
-        message: `Interrupted state-changing step ${step.id} requires review.`,
+        message: `Interrupted ${retryPolicy}-retry step ${step.id} requires review.`,
       });
     }
   }
@@ -248,6 +256,11 @@ export async function createPersistentTask(
         args: step.args ?? {},
         dependsOn: planned.dependsOn,
         parallelSafe: planned.parallelSafe,
+        retryPolicy: planned.contract.retryPolicy,
+        riskLevel: planned.contract.riskLevel,
+        sideEffects: planned.contract.sideEffects,
+        requiresVerification: planned.contract.requiresVerification,
+        resources: planned.contract.resources,
         state: "pending",
         attempts: 0,
       } satisfies PersistentTaskStep;

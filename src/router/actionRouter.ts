@@ -43,6 +43,11 @@ import {
 import { browserProvider } from "../providers/browserProvider.js";
 import { desktopProvider } from "../providers/desktopProvider.js";
 import { getProviderStatuses } from "../providers/registry.js";
+import {
+  getActionContract,
+  summarizeActionContract,
+} from "../runtime/actionContracts.js";
+import { resourceArbiter } from "../runtime/resourceArbiter.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -367,10 +372,11 @@ const actions = {
     schema: z.object({
       url: z.string().url(),
       wait_until: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
+      headless: z.boolean().optional(),
     }),
     openWorld: true,
-    run: ({ url, wait_until }: any) =>
-      browserProvider.open(url, wait_until ?? "domcontentloaded"),
+    run: ({ url, wait_until, headless }: any) =>
+      browserProvider.open(url, wait_until ?? "domcontentloaded", headless),
   },
   "browser.tabs": {
     provider: "browser",
@@ -423,6 +429,28 @@ const actions = {
     openWorld: true,
     run: ({ path, full_page }: any) => browserProvider.screenshot(path, full_page ?? false),
   },
+  "browser.find": {
+    provider: "browser",
+    description: "Find visible interactive browser elements by semantic text.",
+    schema: z.object({
+      query: z.string().min(1),
+      max_results: z.number().int().min(1).max(100).optional(),
+    }),
+    openWorld: true,
+    run: ({ query, max_results }: any) =>
+      browserProvider.find(query, max_results ?? 20),
+  },
+  "browser.upload": {
+    provider: "browser",
+    description: "Upload local files through a browser file input.",
+    schema: z.object({
+      selector: z.string().min(1),
+      files: z.array(z.string()).min(1).max(20),
+    }),
+    destructive: true,
+    openWorld: true,
+    run: ({ selector, files }: any) => browserProvider.upload(selector, files),
+  },
   "browser.close": {
     provider: "browser",
     description: "Close the managed browser.",
@@ -471,6 +499,77 @@ const actions = {
     description: "Save a macOS desktop screenshot.",
     schema: z.object({ path: z.string() }),
     run: ({ path }: any) => desktopProvider.screenshot(path),
+  },
+  "desktop.window_bounds": {
+    provider: "desktop",
+    description: "Read the front window bounds for an application.",
+    schema: z.object({ app_name: z.string().min(1).optional() }),
+    run: ({ app_name }: any) => desktopProvider.windowBounds(app_name),
+  },
+  "desktop.ui_tree": {
+    provider: "desktop",
+    description: "Read a bounded macOS Accessibility UI tree for an application.",
+    schema: z.object({
+      app_name: z.string().min(1).optional(),
+      max_elements: z.number().int().min(1).max(1000).optional(),
+    }),
+    run: ({ app_name, max_elements }: any) =>
+      desktopProvider.uiTree(app_name, max_elements ?? 300),
+  },
+  "desktop.ui_find": {
+    provider: "desktop",
+    description: "Find accessible UI elements by semantic text.",
+    schema: z.object({
+      query: z.string().min(1),
+      app_name: z.string().min(1).optional(),
+      max_results: z.number().int().min(1).max(100).optional(),
+      max_elements: z.number().int().min(1).max(1000).optional(),
+    }),
+    run: ({ query, app_name, max_results, max_elements }: any) =>
+      desktopProvider.uiFind(
+        query,
+        app_name,
+        max_results ?? 20,
+        max_elements ?? 500,
+      ),
+  },
+  "desktop.click_element": {
+    provider: "desktop",
+    description: "Find an accessible UI element by semantic text and click its center.",
+    schema: z.object({
+      query: z.string().min(1),
+      app_name: z.string().min(1).optional(),
+      match_index: z.number().int().min(0).max(99).optional(),
+    }),
+    destructive: true,
+    run: ({ query, app_name, match_index }: any) =>
+      desktopProvider.clickElement(query, app_name, match_index ?? 0),
+  },
+  "desktop.screenshot_region": {
+    provider: "desktop",
+    description: "Capture a rectangular macOS screen region.",
+    schema: z.object({
+      path: z.string(),
+      x: z.number().min(0),
+      y: z.number().min(0),
+      width: z.number().positive(),
+      height: z.number().positive(),
+    }),
+    run: ({ path, x, y, width, height }: any) =>
+      desktopProvider.screenshotRegion(path, x, y, width, height),
+  },
+  "desktop.clipboard_read": {
+    provider: "desktop",
+    description: "Read the macOS clipboard as text.",
+    schema: noArgs,
+    run: () => desktopProvider.clipboardRead(),
+  },
+  "desktop.clipboard_write": {
+    provider: "desktop",
+    description: "Write text to the macOS clipboard.",
+    schema: z.object({ text: z.string() }),
+    destructive: true,
+    run: ({ text }: any) => desktopProvider.clipboardWrite(text),
   },
 } satisfies Record<string, ActionDefinition>;
 
@@ -527,37 +626,61 @@ function resolveReferences(value: unknown, results: Record<string, unknown>): un
 }
 
 export function getRouterCatalog() {
-  return Object.entries(actions).map(([name, definition]) => ({
-    action: name,
-    provider: definition.provider,
-    description: definition.description,
-    destructive: definition.destructive ?? false,
-    openWorld: definition.openWorld ?? false,
-  }));
+  return Object.entries(actions).map(([name, definition]) => {
+    const def = definition as ActionDefinition;
+    const contract = getActionContract(name);
+    return {
+      action: name,
+      provider: def.provider,
+      description: def.description,
+      destructive: def.destructive ?? false,
+      openWorld: def.openWorld ?? false,
+      contract: summarizeActionContract(contract),
+    };
+  });
 }
 
 export function validateRoutedAction(action: string, args: unknown) {
   const definition = definitionFor(action);
   const parsed = definition.schema.parse(args ?? {});
+  const contract = getActionContract(action, parsed);
   return {
     action,
     provider: definition.provider,
     destructive: definition.destructive ?? false,
     openWorld: definition.openWorld ?? false,
+    contract,
     args: parsed,
   };
 }
 
-export async function executeRoutedAction(action: string, args: unknown) {
+export async function executeRoutedAction(
+  action: string,
+  args: unknown,
+  options?: { bypassResourceKeys?: string[] },
+) {
   const definition = definitionFor(action);
   const parsed = definition.schema.parse(args ?? {});
+  const contract = getActionContract(action, parsed);
   const startedAt = Date.now();
-  const result = await definition.run(parsed);
+  const bypass = new Set(options?.bypassResourceKeys ?? []);
+  const resources = contract.resources.filter(
+    (requirement) => !bypass.has(requirement.key),
+  );
+
+  const executed = await resourceArbiter.withResources(
+    action,
+    resources,
+    async () => await definition.run(parsed),
+  );
+
   return {
     action,
     provider: definition.provider,
     durationMs: Date.now() - startedAt,
-    result,
+    resourceWaitMs: executed.lease.waitMs,
+    contract: summarizeActionContract(contract),
+    result: executed.result,
   };
 }
 

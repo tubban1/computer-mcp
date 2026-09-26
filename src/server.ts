@@ -72,6 +72,16 @@ import {
   resolvePersistentTaskStep,
   runPersistentTask,
 } from "./tasks/taskRuntime.js";
+import {
+  executePrimitive,
+  getPrimitiveCatalog,
+  resolvePrimitive,
+} from "./primitives/primitiveRuntime.js";
+import {
+  executeSkill,
+  getCapabilityManifest,
+  getSkillCatalog,
+} from "./skills/skillRuntime.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -129,7 +139,7 @@ function fail(error: unknown) {
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.8.0",
+    version: "0.9.0",
   });
 
   server.tool(
@@ -794,7 +804,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.8.0",
+          version: "0.9.0",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -804,6 +814,11 @@ function createServer() {
           browser: envFlag("ALLOW_BROWSER", false),
           gui: envFlag("ALLOW_GUI", false),
           persistentTasks: true,
+          primitiveAbi: true,
+          skillRuntime: true,
+          resourceArbiter: true,
+          desktopPerception: envFlag("ALLOW_GUI", false),
+          browserUpload: envFlag("ALLOW_BROWSER", false),
           auditLogEnabled: envFlag("AUDIT_LOG_ENABLED", true),
           auditLogPath: getAuditLogPath(),
         });
@@ -1034,6 +1049,7 @@ function createServer() {
     {
       url: z.string().url(),
       wait_until: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
+      headless: z.boolean().optional(),
     },
     {
       title: "Browser Open",
@@ -1042,9 +1058,15 @@ function createServer() {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ url, wait_until }) => {
+    async ({ url, wait_until, headless }) => {
       try {
-        return ok(await browserProvider.open(url, wait_until ?? "domcontentloaded"));
+        return ok(
+          await browserProvider.open(
+            url,
+            wait_until ?? "domcontentloaded",
+            headless,
+          ),
+        );
       } catch (error) {
         return fail(error);
       }
@@ -1681,6 +1703,123 @@ function createServer() {
     },
   );
 
+  server.tool(
+    "capability_manifest",
+    "Return the v0.9 capability manifest for a goal: matching skills, stable primitives, provider availability, and architecture guidance. Prefer this over scanning all low-level tools.",
+    {
+      goal: z.string().max(2000).optional(),
+    },
+    {
+      title: "Capability Manifest",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ goal }) => {
+      try {
+        return ok(await getCapabilityManifest(goal ?? ""));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "primitive_catalog",
+    "List the stable v0.9 Primitive ABI. Primitives compress many provider actions into a smaller cross-domain instruction set.",
+    {},
+    {
+      title: "Primitive Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async () => {
+      try {
+        return ok(getPrimitiveCatalog());
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "primitive_call",
+    "Execute one stable Primitive ABI instruction. Use dry_run=true to resolve the primitive to a routed action and validate its contract without executing.",
+    {
+      primitive: z.string().min(1),
+      op: z.string().min(1),
+      args: z.record(z.unknown()).optional(),
+      dry_run: z.boolean().optional(),
+    },
+    {
+      title: "Primitive Call",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ primitive, op, args, dry_run }) => {
+      try {
+        if (dry_run) {
+          return ok({
+            dryRun: true,
+            ...resolvePrimitive(primitive, op, args ?? {}),
+          });
+        }
+        return ok(await executePrimitive(primitive, op, args ?? {}));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "skill_catalog",
+    "List v0.9 reusable Skills. Skills package Primitive graphs, state logic, and governance metadata for known workflows.",
+    {},
+    {
+      title: "Skill Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async () => {
+      try {
+        return ok(getSkillCatalog());
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "skill_run",
+    "Run a reusable v0.9 Skill such as wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Consequential skills default to preparation-only behavior unless their explicit send/publish flag is true.",
+    {
+      skill: z.string().min(1),
+      args: z.record(z.unknown()).optional(),
+      dry_run: z.boolean().optional(),
+    },
+    {
+      title: "Run Skill",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ skill, args, dry_run }) => {
+      try {
+        return ok(await executeSkill(skill, args ?? {}, dry_run ?? false));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
   return server;
 }
 
@@ -1748,7 +1887,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.8.0",
+    version: "0.9.0",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1758,6 +1897,11 @@ app.get("/health", (_req, res) => {
       browser: envFlag("ALLOW_BROWSER", false),
       gui: envFlag("ALLOW_GUI", false),
       persistentTasks: true,
+      primitiveAbi: true,
+      skillRuntime: true,
+      resourceArbiter: true,
+      desktopPerception: envFlag("ALLOW_GUI", false),
+      browserUpload: envFlag("ALLOW_BROWSER", false),
       auditLog: envFlag("AUDIT_LOG_ENABLED", true),
     },
   });
@@ -1765,5 +1909,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.8.0 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.0 listening on http://127.0.0.1:${port}/mcp`);
 });

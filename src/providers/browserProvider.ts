@@ -10,7 +10,10 @@ import {
   type Page,
 } from "playwright-core";
 import { envFlag } from "../security/capabilities.js";
-import { assertAllowedTargetPath } from "../security/pathGuard.js";
+import {
+  assertAllowedExistingPath,
+  assertAllowedTargetPath,
+} from "../security/pathGuard.js";
 import type { ComputerProvider, ProviderStatus } from "./types.js";
 
 const browserPaths = [
@@ -112,6 +115,7 @@ class BrowserProvider implements ComputerProvider {
   private activePage: Page | null = null;
   private chromeProcess: ChildProcess | null = null;
   private cdpPort: number | null = null;
+  private currentHeadless: boolean | null = null;
 
   async status(): Promise<ProviderStatus> {
     const executable = await detectBrowserExecutable();
@@ -124,7 +128,7 @@ class BrowserProvider implements ComputerProvider {
       details: {
         executable,
         connected: Boolean(this.context),
-        headless: envFlag("BROWSER_HEADLESS", false),
+        headless: this.currentHeadless ?? envFlag("BROWSER_HEADLESS", false),
         cdpPort: this.cdpPort,
         processArch: process.arch,
         rosetta: runningUnderRosetta(),
@@ -133,7 +137,7 @@ class BrowserProvider implements ComputerProvider {
     };
   }
 
-  private async launchBrowser(): Promise<BrowserContext> {
+  private async launchBrowser(headlessOverride?: boolean): Promise<BrowserContext> {
     requireBrowserEnabled();
 
     const executablePath = await detectBrowserExecutable();
@@ -148,7 +152,7 @@ class BrowserProvider implements ComputerProvider {
     await fs.mkdir(userDataDir, { recursive: true });
 
     const port = await findFreePort();
-    const headless = envFlag("BROWSER_HEADLESS", false);
+    const headless = headlessOverride ?? envFlag("BROWSER_HEADLESS", false);
     const args = [
       `--remote-debugging-port=${port}`,
       "--remote-debugging-address=127.0.0.1",
@@ -188,6 +192,7 @@ class BrowserProvider implements ComputerProvider {
       this.context = context;
       this.chromeProcess = child;
       this.cdpPort = port;
+      this.currentHeadless = headless;
       this.activePage = context.pages()[0] ?? (await context.newPage());
 
       browser.on("disconnected", () => {
@@ -196,6 +201,7 @@ class BrowserProvider implements ComputerProvider {
         this.activePage = null;
         this.chromeProcess = null;
         this.cdpPort = null;
+        this.currentHeadless = null;
       });
 
       return context;
@@ -207,10 +213,18 @@ class BrowserProvider implements ComputerProvider {
     }
   }
 
-  private async ensureContext(): Promise<BrowserContext> {
+  private async ensureContext(headlessOverride?: boolean): Promise<BrowserContext> {
     requireBrowserEnabled();
+    if (
+      this.context &&
+      headlessOverride !== undefined &&
+      this.currentHeadless !== null &&
+      this.currentHeadless !== headlessOverride
+    ) {
+      await this.close();
+    }
     if (this.context) return this.context;
-    return await this.launchBrowser();
+    return await this.launchBrowser(headlessOverride);
   }
 
   private async page(): Promise<Page> {
@@ -223,7 +237,11 @@ class BrowserProvider implements ComputerProvider {
   async open(
     url: string,
     waitUntil: "load" | "domcontentloaded" | "networkidle" = "domcontentloaded",
+    headless?: boolean,
   ) {
+    if (headless !== undefined) {
+      await this.ensureContext(headless);
+    }
     const page = await this.page();
     await page.goto(url, { waitUntil, timeout: 60_000 });
     return { url: page.url(), title: await page.title() };
@@ -333,6 +351,95 @@ class BrowserProvider implements ComputerProvider {
     return { url: page.url(), title: await page.title(), selector, submitted: submit };
   }
 
+
+  async find(query: string, maxResults = 20) {
+    const page = await this.page();
+    const normalized = query.trim();
+    if (!normalized) throw new Error("Browser find query cannot be empty.");
+
+    const bounded = Math.min(Math.max(maxResults, 1), 100);
+    const payload = JSON.stringify({ query: normalized, maxResults: bounded });
+    const result = (await page.evaluate(`
+      (() => {
+        const { query, maxResults } = ${payload};
+        const q = query.toLowerCase();
+        const visible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return (
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        };
+
+        return Array.from(
+          document.querySelectorAll(
+            "a,button,input,textarea,select,[role=button],[contenteditable=true]"
+          )
+        )
+          .filter(visible)
+          .map((el, index) => {
+            const rect = el.getBoundingClientRect();
+            const labelText = el.closest("label")?.innerText || "";
+            const text = (
+              el.getAttribute("aria-label") ||
+              el.getAttribute("placeholder") ||
+              el.getAttribute("name") ||
+              el.textContent ||
+              labelText ||
+              ""
+            ).trim();
+            return {
+              index,
+              tag: el.tagName.toLowerCase(),
+              text: text.slice(0, 240),
+              role: el.getAttribute("role"),
+              type: el.getAttribute("type"),
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+            };
+          })
+          .filter((item) => item.text.toLowerCase().includes(q))
+          .slice(0, maxResults);
+      })()
+    `)) as Array<{
+      index: number;
+      tag: string;
+      text: string;
+      role: string | null;
+      type: string | null;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+
+    return { query: normalized, matches: result, url: page.url() };
+  }
+
+  async upload(selector: string, files: string[]) {
+    if (!files.length) throw new Error("At least one upload file is required.");
+    const safeFiles = [];
+    for (const file of files) {
+      safeFiles.push(await assertAllowedExistingPath(file));
+    }
+
+    const page = await this.page();
+    const locator = page.locator(selector).first();
+    await locator.setInputFiles(safeFiles, { timeout: 30_000 });
+    return {
+      selector,
+      files: safeFiles,
+      count: safeFiles.length,
+      url: page.url(),
+      title: await page.title(),
+    };
+  }
+
   async screenshot(outputPath: string, fullPage = false) {
     const page = await this.page();
     const safePath = await assertAllowedTargetPath(outputPath);
@@ -350,6 +457,7 @@ class BrowserProvider implements ComputerProvider {
     this.activePage = null;
     this.chromeProcess = null;
     this.cdpPort = null;
+    this.currentHeadless = null;
 
     if (browser?.isConnected()) {
       await browser.close().catch(() => undefined);
