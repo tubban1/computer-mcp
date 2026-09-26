@@ -1,234 +1,109 @@
 # computer-mcp
 
-A personal Computer MCP runtime for ChatGPT with pluggable providers for filesystem, shell, Git, transactions, browser automation, and macOS desktop control.
+A personal Computer MCP runtime for ChatGPT with filesystem, shell, Git, transaction, browser, macOS desktop, provider routing, dependency graphs, and persistent resumable tasks.
 
-## v0.7 — Dependency Graph + Parallel Orchestration
+## v0.8 — Persistent Task / Resume
 
-v0.7 adds a dependency-aware scheduler on top of the v0.6 Provider Router.
+v0.8 adds durable task state so a long-running job can continue after a new ChatGPT conversation, tunnel restart, computer-mcp restart, or Mac restart.
 
-New tool:
+New tools:
 
-- `computer_graph`
+- `task_create`
+- `task_list`
+- `task_status`
+- `task_run`
+- `task_pause`
+- `task_cancel`
+- `task_resolve_step`
 
-The existing `computer_action`, `computer_batch`, and all provider-specific tools remain available.
+Tool count: **62**
 
-## Why a graph scheduler
+## Persistent execution model
 
-v0.6 batches actions into one MCP call, but executes them sequentially:
+Create a dependency graph once, then run it in resumable waves:
 
 ```text
-A → B → C → D
+task_create
+   ↓
+task_run
+   ↓
+durable checkpoint after each wave
+   ↓
+pause / tunnel restart / server restart
+   ↓
+task_run
+   ↓
+resume only unfinished work
 ```
 
-v0.7 can express dependencies and run independent, parallel-safe work concurrently:
+Each step stores its action, dependencies, state, attempt count, timestamps, duration, output needed by later `$ref` steps, and any error or recovery note.
+
+## Encryption at rest
+
+Persistent task files are encrypted locally with **AES-256-GCM**.
+
+Default locations:
 
 ```text
-             ┌→ browser.snapshot ─────┐
-browser.open ├→ browser.screenshot ───┼→ browser.close
-             └→ desktop.frontmost_app ┘
+~/.computer-mcp/tasks/
+~/.computer-mcp/task.key
 ```
 
-The agent still sends one MCP call, while computer-mcp schedules the internal work.
+Permissions are tightened to task directory `700`, task files `600`, and encryption key `600`. The key is created automatically the first time a persistent task is saved.
 
-## computer_graph
+Task arguments and outputs may contain sensitive local or web data. Encryption protects them at rest from accidental disclosure, but anyone with access to both your macOS account and task key can decrypt them. Back up `task.key` if you expect to migrate persistent tasks to another machine; losing the key makes saved tasks unreadable.
+
+## Crash / restart recovery
+
+Before a wave starts, selected steps are durably saved as `running`. After completion, results are saved again.
+
+For interrupted parallel-safe/read-oriented work such as `fs.read`, `git.status`, `browser.snapshot`, or `desktop.frontmost_app`, v0.8 resets the step to `pending` after server restart so it may run again.
+
+For interrupted state-changing work such as `fs.write`, `shell.exec`, `git.push`, `browser.click`, `desktop.type`, or `tx.rollback`, v0.8 changes the step to `needs_review` instead of automatically retrying it. This avoids accidental duplicate side effects.
+
+Resolve such a step with `task_resolve_step`: use `retry` only after checking whether the prior attempt took effect, or use `mark_succeeded` after manual verification and optionally provide the result later `$ref` steps need.
+
+## Time slicing
+
+`task_run` supports `max_waves`, `time_budget_ms`, `max_concurrency`, and `fail_fast`. This lets ChatGPT intentionally yield and resume later rather than keeping one tool call open indefinitely.
 
 Example:
 
-```json
-{
-  "steps": [
-    {
-      "id": "open",
-      "action": "browser.open",
-      "args": { "url": "https://example.com" }
-    },
-    {
-      "id": "read",
-      "action": "browser.snapshot",
-      "depends_on": ["open"],
-      "args": { "max_chars": 4000 }
-    },
-    {
-      "id": "shot",
-      "action": "browser.screenshot",
-      "depends_on": ["open"],
-      "args": { "path": "/allowed/path/example.png" }
-    },
-    {
-      "id": "front",
-      "action": "desktop.frontmost_app",
-      "depends_on": ["open"]
-    },
-    {
-      "id": "close",
-      "action": "browser.close",
-      "depends_on": ["read", "shot", "front"]
-    }
-  ],
-  "max_concurrency": 4
-}
+```text
+task_run(task_id, max_waves=2)
 ```
 
-After `open`, the `read`, `shot`, and `front` branches are eligible to run in the same wave.
+The task pauses after two durable waves, and another `task_run` resumes from the next unfinished step.
 
-## Automatic dependencies from references
+## Pause and cancel
 
-A `$ref` automatically creates a dependency, so this:
+`task_pause` requests a pause after the current wave. `task_cancel` requests cancellation after the current wave; cancelled tasks are terminal.
 
-```json
-{
-  "id": "status",
-  "action": "tx.status",
-  "args": {
-    "transaction_id": { "$ref": "tx.id" }
-  }
-}
-```
+## Choosing the right orchestration layer
 
-implicitly depends on the `tx` step. You do not have to repeat `depends_on: ["tx"]`.
+- Use `computer_batch` for simple ordered workflows.
+- Use `computer_graph` for one-shot dependency-aware parallel execution.
+- Use `task_create` + `task_run` when work must survive restarts.
 
-## Safety-aware parallelism
-
-Not every action is parallelized.
-
-Examples marked parallel-safe include:
-
-- filesystem reads/searches
-- Git status/diff/log
-- process output reads
-- transaction status/list
-- browser snapshot/screenshot/tab listing
-- desktop frontmost-app and screenshot reads
-
-State-changing actions are serialized, including:
-
-- file writes/deletes
-- shell execution
-- Git add/commit/pull/push
-- transaction begin/rollback/complete
-- browser navigation/click/type/close
-- desktop click/type/key/app activation
-
-This favors deterministic behavior over maximum concurrency.
-
-## Failure behavior
-
-Each graph step ends in one of:
+## Provider stack
 
 ```text
-succeeded
-failed
-skipped
+ChatGPT
+   ↓
+Persistent Task Runtime     ← v0.8
+   ↓
+Computer Graph              ← v0.7
+   ↓
+Provider Router             ← v0.6
+   ↓
+Providers                   ← v0.5
+   ├─ Filesystem
+   ├─ Shell
+   ├─ Git
+   ├─ Transaction
+   ├─ Browser
+   └─ macOS Desktop
 ```
-
-A step whose dependency fails is skipped automatically.
-
-With:
-
-```text
-fail_fast=true
-```
-
-the scheduler stops starting new work after the first failure.
-
-With:
-
-```text
-fail_fast=false
-```
-
-independent branches can continue, while descendants of the failed branch are skipped.
-
-## Concurrency
-
-`max_concurrency` is bounded from 1 to 8 and defaults to 4.
-
-Unsafe actions always execute alone. A wave contains multiple actions only when all selected actions are marked parallel-safe.
-
-## Dry run
-
-Use:
-
-```text
-computer_graph(..., dry_run=true)
-```
-
-to validate:
-
-- step IDs
-- routed action names
-- explicit dependencies
-- implicit `$ref` dependencies
-- dependency cycles
-- literal argument schemas
-- parallel-safety classification
-
-Arguments containing runtime `$ref` values are schema-validated after the references resolve during real execution.
-
-## Execution metrics
-
-The graph response includes:
-
-- wall-clock duration
-- summed step duration
-- execution waves
-- per-step duration
-- parallel vs serial waves
-- a `parallelEfficiency` ratio
-
-A ratio above 1 means work overlapped in time.
-
-## v0.6 routing layer
-
-The compact routing tools remain:
-
-- `router_catalog`
-- `computer_action`
-- `computer_batch`
-
-Use `computer_batch` for simple ordered workflows and `computer_graph` when branches can run independently.
-
-## Providers
-
-Built-in providers:
-
-- `filesystem`
-- `shell`
-- `git`
-- `transaction`
-- `browser`
-- `desktop`
-
-Use `provider_status` to inspect provider availability.
-
-## Browser provider
-
-The browser provider uses `playwright-core` with an existing Chromium-based browser. On Apple Silicon Macs, it detects Rosetta and launches Chrome natively as arm64.
-
-Enable:
-
-```env
-ALLOW_BROWSER=true
-BROWSER_HEADLESS=false
-```
-
-Web page content is untrusted input. Browser interactions remain subject to the user's intent and permission boundaries.
-
-## Desktop provider
-
-The current desktop provider targets macOS with native `osascript` and `screencapture`.
-
-Enable:
-
-```env
-ALLOW_GUI=true
-```
-
-macOS may require Accessibility and Screen Recording permissions.
-
-## Tool count
-
-v0.7 exposes **55 MCP tools**, all with MCP annotations.
 
 ## Example configuration
 
@@ -247,6 +122,10 @@ ALLOW_GUI=true
 BROWSER_HEADLESS=false
 
 AUDIT_LOG_ENABLED=true
+
+# Optional overrides:
+# TASK_DIR=/Users/wahaha/.computer-mcp/tasks
+# TASK_KEY_PATH=/Users/wahaha/.computer-mcp/task.key
 ```
 
 ## Run
@@ -268,16 +147,4 @@ MCP endpoint:
 http://127.0.0.1:8787/mcp
 ```
 
-After changing tool definitions, restart the local server and tunnel client, then refresh/reconnect the ChatGPT app so it rescans the tool catalog.
-
-## Roadmap
-
-The provider/router/graph boundary is intended to support:
-
-- workflow templates
-- persistent task state and resumability
-- per-provider resource locks
-- SSH and Docker providers
-- Windows/Linux desktop providers
-- remote VM providers
-- app-specific providers
+After tool-definition changes, restart the tunnel client and refresh/reconnect the ChatGPT app so it rescans the catalog.
