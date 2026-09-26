@@ -479,10 +479,14 @@ const actions = {
   },
   "desktop.type": {
     provider: "desktop",
-    description: "Type into the focused macOS control.",
-    schema: z.object({ text: z.string() }),
+    description: "Type into the focused macOS control using clipboard paste. Preserves a plain-text clipboard by default.",
+    schema: z.object({
+      text: z.string(),
+      preserve_clipboard: z.boolean().optional(),
+    }),
     destructive: true,
-    run: ({ text }: any) => desktopProvider.type(text),
+    run: ({ text, preserve_clipboard }: any) =>
+      desktopProvider.type(text, preserve_clipboard ?? true),
   },
   "desktop.key": {
     provider: "desktop",
@@ -570,6 +574,54 @@ const actions = {
     schema: z.object({ text: z.string() }),
     destructive: true,
     run: ({ text }: any) => desktopProvider.clipboardWrite(text),
+  },
+  "desktop.clipboard_info": {
+    provider: "desktop",
+    description: "Read macOS clipboard metadata and change counter without returning clipboard content.",
+    schema: noArgs,
+    run: () => desktopProvider.clipboardInfo(),
+  },
+  "desktop.clipboard_snapshot": {
+    provider: "desktop",
+    description: "Capture the current text clipboard into a short-lived in-memory snapshot token for later restore.",
+    schema: noArgs,
+    run: () => desktopProvider.clipboardSnapshot(),
+  },
+  "desktop.clipboard_restore": {
+    provider: "desktop",
+    description: "Restore a previously snapshotted plain-text clipboard.",
+    schema: z.object({ token: z.string().min(1) }),
+    destructive: true,
+    run: ({ token }: any) => desktopProvider.clipboardRestore(token),
+  },
+  "desktop.clipboard_wait_change": {
+    provider: "desktop",
+    description: "Wait for the macOS clipboard change counter to advance and return newly copied text.",
+    schema: z.object({
+      previous_change_count: z.number().int().min(0),
+      timeout_ms: z.number().int().min(100).max(30000).optional(),
+      poll_ms: z.number().int().min(20).max(1000).optional(),
+    }),
+    run: ({ previous_change_count, timeout_ms, poll_ms }: any) =>
+      desktopProvider.clipboardWaitChange(
+        previous_change_count,
+        timeout_ms ?? 2000,
+        poll_ms ?? 50,
+      ),
+  },
+  "desktop.clipboard_copy_selection": {
+    provider: "desktop",
+    description: "Press Cmd+C, capture copied text, and restore the previous plain-text clipboard when safe.",
+    schema: z.object({
+      timeout_ms: z.number().int().min(100).max(30000).optional(),
+      restore: z.boolean().optional(),
+    }),
+    destructive: true,
+    run: ({ timeout_ms, restore }: any) =>
+      desktopProvider.clipboardCopySelection(
+        timeout_ms ?? 2000,
+        restore ?? true,
+      ),
   },
 } satisfies Record<string, ActionDefinition>;
 

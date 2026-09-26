@@ -133,20 +133,38 @@ const skills: SkillDefinition[] = [
     id: "wechat.read",
     domain: "communication",
     description:
-      "Focus WeChat and read its current Accessibility tree, optionally capturing the window region.",
+      "Read WeChat with a clipboard-first fast path, falling back to Accessibility and optional screenshot perception.",
     keywords: ["wechat", "微信", "消息", "聊天", "read message"],
     contract: WECHAT_READ_CONTRACT,
     inputs: {
+      clipboard_first: "Try Cmd+C on the current WeChat selection first; default true.",
+      clipboard_timeout_ms: "Clipboard copy timeout in milliseconds; default 1200.",
+      clipboard_only: "If true, return after the clipboard attempt without Accessibility fallback.",
       max_elements: "Maximum accessibility elements to scan (default 700).",
       screenshot_path: "Optional allowed output path for a WeChat window screenshot.",
     },
     dryRunPlan: (args) => ({
       steps: [
         { action: "desktop.open_app", args: { app_name: "WeChat" } },
-        {
-          action: "desktop.ui_tree",
-          args: { app_name: "WeChat", max_elements: args.max_elements ?? 700 },
-        },
+        ...(optionalBoolean(args, "clipboard_first", true)
+          ? [
+              {
+                action: "desktop.clipboard_copy_selection",
+                args: {
+                  timeout_ms: args.clipboard_timeout_ms ?? 1200,
+                  restore: true,
+                },
+              },
+            ]
+          : []),
+        ...(!optionalBoolean(args, "clipboard_only", false)
+          ? [
+              {
+                action: "desktop.ui_tree",
+                args: { app_name: "WeChat", max_elements: args.max_elements ?? 700 },
+              },
+            ]
+          : []),
         ...(typeof args.screenshot_path === "string"
           ? [
               { action: "desktop.window_bounds", args: { app_name: "WeChat" } },
@@ -159,15 +177,63 @@ const skills: SkillDefinition[] = [
       await withSkillResources("wechat.read", WECHAT_READ_CONTRACT, async (held) => {
         await call("desktop.open_app", { app_name: "WeChat" }, held);
         await sleep(350);
-        const tree = (await call(
-          "desktop.ui_tree",
-          {
-            app_name: "WeChat",
-            max_elements:
-              typeof args.max_elements === "number" ? args.max_elements : 700,
-          },
-          held,
-        )) as any;
+
+        let clipboard: any = null;
+        if (optionalBoolean(args, "clipboard_first", true)) {
+          try {
+            clipboard = await call(
+              "desktop.clipboard_copy_selection",
+              {
+                timeout_ms:
+                  typeof args.clipboard_timeout_ms === "number"
+                    ? args.clipboard_timeout_ms
+                    : 1200,
+                restore: true,
+              },
+              held,
+            );
+          } catch (error) {
+            clipboard = {
+              copied: false,
+              restored: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
+
+        const clipboardText =
+          clipboard?.copied &&
+          typeof clipboard?.text === "string" &&
+          clipboard.text.length > 0
+            ? clipboard.text
+            : null;
+
+        if (clipboardText && optionalBoolean(args, "clipboard_only", false)) {
+          return {
+            app: "WeChat",
+            source: "clipboard",
+            clipboardText,
+            clipboard,
+            textualElements: [],
+            scanned: 0,
+            screenshot: null,
+            note:
+              "Text came directly from the current WeChat selection through the clipboard fast path; the user's previous clipboard was restored with full-fidelity pasteboard data.",
+          };
+        }
+
+        let tree: any = { elements: [] };
+        if (!optionalBoolean(args, "clipboard_only", false)) {
+          tree = (await call(
+            "desktop.ui_tree",
+            {
+              app_name: "WeChat",
+              max_elements:
+                typeof args.max_elements === "number" ? args.max_elements : 700,
+            },
+            held,
+          )) as any;
+        }
 
         let screenshot: unknown = null;
         if (typeof args.screenshot_path === "string" && args.screenshot_path.trim()) {
@@ -200,13 +266,79 @@ const skills: SkillDefinition[] = [
 
         return {
           app: "WeChat",
+          source: clipboardText ? "clipboard+accessibility" : "accessibility",
+          clipboardText,
+          clipboard,
           textualElements: textual,
           scanned: tree?.elements?.length ?? 0,
           screenshot,
-          note:
-            "Accessibility output is deterministic UI data. If message text is not exposed by WeChat, use the returned screenshot with a vision-capable client.",
+          note: clipboardText
+            ? "Clipboard fast path captured selected WeChat text and restored the previous clipboard with full-fidelity pasteboard data; Accessibility remains available as structural context."
+            : "No clipboard selection was captured, so Accessibility is the primary text/structure source. If WeChat hides message text, use the optional screenshot with a vision-capable client.",
         };
       }),
+  },
+  {
+    id: "wechat.copy_selected",
+    domain: "communication",
+    description:
+      "Copy the currently selected WeChat text through the clipboard and restore the user's previous clipboard with full-fidelity pasteboard data.",
+    keywords: ["wechat", "微信", "复制", "clipboard", "selected message"],
+    contract: {
+      riskLevel: "medium",
+      idempotent: true,
+      sideEffects: ["window_focus", "clipboard_capture"],
+      requiresVerification: false,
+      retryPolicy: "automatic",
+      resources: [
+        { key: "desktop.focus", mode: "exclusive" },
+        { key: "desktop.input", mode: "exclusive" },
+        { key: "desktop.clipboard", mode: "exclusive" },
+      ],
+    },
+    inputs: {
+      timeout_ms: "Clipboard copy timeout in milliseconds; default 1500.",
+    },
+    dryRunPlan: (args) => ({
+      steps: [
+        { action: "desktop.open_app", args: { app_name: "WeChat" } },
+        {
+          action: "desktop.clipboard_copy_selection",
+          args: { timeout_ms: args.timeout_ms ?? 1500, restore: true },
+        },
+      ],
+    }),
+    run: async (args) => {
+      const contract = {
+        riskLevel: "medium" as const,
+        idempotent: true,
+        sideEffects: ["window_focus", "clipboard_capture"],
+        requiresVerification: false,
+        retryPolicy: "automatic" as const,
+        resources: [
+          { key: "desktop.focus", mode: "exclusive" as const },
+          { key: "desktop.input", mode: "exclusive" as const },
+          { key: "desktop.clipboard", mode: "exclusive" as const },
+        ],
+      };
+      return await withSkillResources(
+        "wechat.copy_selected",
+        contract,
+        async (held) => {
+          await call("desktop.open_app", { app_name: "WeChat" }, held);
+          await sleep(250);
+          return await call(
+            "desktop.clipboard_copy_selection",
+            {
+              timeout_ms:
+                typeof args.timeout_ms === "number" ? args.timeout_ms : 1500,
+              restore: true,
+            },
+            held,
+          );
+        },
+      );
+    },
   },
   {
     id: "wechat.send",

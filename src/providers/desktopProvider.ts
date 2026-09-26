@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { envFlag } from "../security/capabilities.js";
 import { assertAllowedTargetPath } from "../security/pathGuard.js";
@@ -48,6 +50,79 @@ async function run(command: string, args: string[]) {
   });
 }
 
+
+async function runWithInput(command: string, args: string[], input: string) {
+  return await new Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  }>((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    child.on("error", reject);
+    child.on("close", (code) =>
+      resolve({ stdout, stderr, exitCode: code ?? 1 }),
+    );
+    child.stdin.end(input);
+  });
+}
+
+async function jxa(script: string) {
+  const result = await run("/usr/bin/osascript", ["-l", "JavaScript", "-e", script]);
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || "JXA osascript failed.");
+  }
+  return result.stdout.trim();
+}
+
+type ClipboardFlavor = {
+  type: string;
+  data: string;
+  bytes: number;
+};
+
+type ClipboardSnapshotEntry = {
+  token: string;
+  text: string;
+  types: string[];
+  items: ClipboardFlavor[][];
+  totalBytes: number;
+  changeCount: number;
+  createdAt: number;
+  sha256: string;
+  safeTextRestore: boolean;
+  fullFidelityRestore: boolean;
+};
+
+const clipboardSnapshots = new Map<string, ClipboardSnapshotEntry>();
+const CLIPBOARD_SNAPSHOT_TTL_MS = 10 * 60_000;
+const CLIPBOARD_SNAPSHOT_LIMIT = 100;
+const CLIPBOARD_SNAPSHOT_MAX_BYTES = 16 * 1024 * 1024;
+const SAFE_TEXT_CLIPBOARD_TYPES = new Set([
+  "public.utf8-plain-text",
+  "public.utf16-plain-text",
+  "public.text",
+  "NSStringPboardType",
+  "com.apple.traditional-mac-plain-text",
+]);
+
+function pruneClipboardSnapshots() {
+  const cutoff = Date.now() - CLIPBOARD_SNAPSHOT_TTL_MS;
+  for (const [token, entry] of clipboardSnapshots) {
+    if (entry.createdAt < cutoff) clipboardSnapshots.delete(token);
+  }
+  while (clipboardSnapshots.size > CLIPBOARD_SNAPSHOT_LIMIT) {
+    const first = clipboardSnapshots.keys().next().value as string | undefined;
+    if (!first) break;
+    clipboardSnapshots.delete(first);
+  }
+}
+
 function appleScriptEscape(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
@@ -85,6 +160,7 @@ class DesktopProvider implements ComputerProvider {
         "ui-tree",
         "region-screenshot",
         "clipboard",
+        "clipboard-transaction",
       ],
       details: {
         platform: process.platform,
@@ -288,6 +364,34 @@ class DesktopProvider implements ComputerProvider {
     return { x: Math.round(x), y: Math.round(y), clicked: true };
   }
 
+  async clipboardInfo() {
+    requireDesktopEnabled();
+    const raw = await jxa(
+      'ObjC.import("AppKit"); var pb=$.NSPasteboard.generalPasteboard; var its=pb.pasteboardItems.js; var types=[]; var total=0; var items=its.map(function(i){ return i.types.js.map(function(t){ var d=i.dataForType(t); var n=d ? Number(d.length) : 0; total+=n; var ty=ObjC.unwrap(t); types.push(ty); return {type:ty,bytes:n}; }); }); JSON.stringify({changeCount:Number(pb.changeCount),types:Array.from(new Set(types)),items:items,totalBytes:total})',
+    );
+    const parsed = JSON.parse(
+      raw || '{"changeCount":0,"types":[],"items":[],"totalBytes":0}',
+    ) as {
+      changeCount: number;
+      types: string[];
+      items: Array<Array<{ type: string; bytes: number }>>;
+      totalBytes: number;
+    };
+    const safeTextRestore =
+      parsed.types.length === 0 ||
+      parsed.types.every((type) => SAFE_TEXT_CLIPBOARD_TYPES.has(type));
+    return {
+      changeCount: parsed.changeCount,
+      types: parsed.types,
+      itemCount: parsed.items.length,
+      totalBytes: parsed.totalBytes,
+      safeTextRestore,
+      fullFidelitySnapshotAvailable:
+        parsed.totalBytes <= CLIPBOARD_SNAPSHOT_MAX_BYTES,
+      maxSnapshotBytes: CLIPBOARD_SNAPSHOT_MAX_BYTES,
+    };
+  }
+
   async clipboardRead() {
     requireDesktopEnabled();
     const result = await run("/usr/bin/pbpaste", []);
@@ -299,18 +403,234 @@ class DesktopProvider implements ComputerProvider {
 
   async clipboardWrite(text: string) {
     requireDesktopEnabled();
-    const safe = appleScriptEscape(text);
-    await osascript(`set the clipboard to "${safe}"`);
+    const result = await runWithInput("/usr/bin/pbcopy", [], text);
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() || "pbcopy failed.");
+    }
     return { writtenCharacters: text.length };
   }
 
-  async type(text: string) {
+  async clipboardSnapshot() {
     requireDesktopEnabled();
-    await this.clipboardWrite(text);
-    await osascript(
-      'tell application "System Events" to keystroke "v" using {command down}',
+    pruneClipboardSnapshots();
+    const info = await this.clipboardInfo();
+    const { text } = await this.clipboardRead();
+    const token =
+      "clip_" +
+      Date.now().toString(36) +
+      "_" +
+      randomUUID().replaceAll("-", "").slice(0, 12);
+    const sha256 = createHash("sha256").update(text, "utf8").digest("hex");
+
+    if (!info.fullFidelitySnapshotAvailable) {
+      return {
+        token: null,
+        changeCount: info.changeCount,
+        types: info.types,
+        itemCount: info.itemCount,
+        characters: text.length,
+        bytes: Buffer.byteLength(text, "utf8"),
+        totalClipboardBytes: info.totalBytes,
+        sha256,
+        safeTextRestore: info.safeTextRestore,
+        fullFidelityRestore: false,
+        reason:
+          "Clipboard exceeds the full-fidelity snapshot size limit; automatic overwrite/restore is disabled.",
+        maxSnapshotBytes: CLIPBOARD_SNAPSHOT_MAX_BYTES,
+        expiresInMs: CLIPBOARD_SNAPSHOT_TTL_MS,
+      };
+    }
+
+    const raw = await jxa(
+      'ObjC.import("AppKit"); var pb=$.NSPasteboard.generalPasteboard; var its=pb.pasteboardItems.js; var items=its.map(function(i){ return i.types.js.map(function(t){ var d=i.dataForType(t); if(!d){return null;} return {type:ObjC.unwrap(t),data:ObjC.unwrap(d.base64EncodedStringWithOptions(0)),bytes:Number(d.length)}; }).filter(function(x){return x!==null;}); }); JSON.stringify({changeCount:Number(pb.changeCount),items:items})',
     );
-    return { typedCharacters: text.length, method: "clipboard-paste" };
+    const serialized = JSON.parse(raw || '{"changeCount":0,"items":[]}') as {
+      changeCount: number;
+      items: ClipboardFlavor[][];
+    };
+    const fullSha256 = createHash("sha256")
+      .update(JSON.stringify(serialized.items), "utf8")
+      .digest("hex");
+
+    clipboardSnapshots.set(token, {
+      token,
+      text,
+      types: info.types,
+      items: serialized.items,
+      totalBytes: info.totalBytes,
+      changeCount: serialized.changeCount,
+      createdAt: Date.now(),
+      sha256,
+      safeTextRestore: info.safeTextRestore,
+      fullFidelityRestore: true,
+    });
+    return {
+      token,
+      changeCount: serialized.changeCount,
+      types: info.types,
+      itemCount: serialized.items.length,
+      characters: text.length,
+      bytes: Buffer.byteLength(text, "utf8"),
+      totalClipboardBytes: info.totalBytes,
+      sha256,
+      fullSha256,
+      safeTextRestore: info.safeTextRestore,
+      fullFidelityRestore: true,
+      maxSnapshotBytes: CLIPBOARD_SNAPSHOT_MAX_BYTES,
+      expiresInMs: CLIPBOARD_SNAPSHOT_TTL_MS,
+    };
+  }
+
+  async clipboardRestore(token: string) {
+    requireDesktopEnabled();
+    pruneClipboardSnapshots();
+    const entry = clipboardSnapshots.get(token);
+    if (!entry) {
+      throw new Error("Clipboard snapshot token is missing or expired.");
+    }
+    if (!entry.fullFidelityRestore) {
+      throw new Error("Clipboard snapshot is not fully restorable.");
+    }
+
+    const tempPath = path.join(
+      os.tmpdir(),
+      "computer-mcp-clipboard-" + randomUUID() + ".json",
+    );
+    await fs.writeFile(
+      tempPath,
+      JSON.stringify({ items: entry.items }),
+      { encoding: "utf8", mode: 0o600 },
+    );
+
+    try {
+      const fileLiteral = JSON.stringify(tempPath);
+      const script =
+        'ObjC.import("AppKit"); ObjC.import("Foundation"); var file=' +
+        fileLiteral +
+        '; var ns=$.NSString.stringWithContentsOfFileEncodingError($(file),$.NSUTF8StringEncoding,null); var payload=JSON.parse(ObjC.unwrap(ns)); var pb=$.NSPasteboard.generalPasteboard; pb.clearContents; var arr=$.NSMutableArray.alloc.init; payload.items.forEach(function(fields){ var item=$.NSPasteboardItem.alloc.init; fields.forEach(function(f){ var data=$.NSData.alloc.initWithBase64EncodedStringOptions($(f.data),0); item.setDataForType(data,$(f.type)); }); arr.addObject(item); }); if(payload.items.length>0){pb.writeObjects(arr);} JSON.stringify({changeCount:Number(pb.changeCount),items:payload.items.length})';
+      const restored = JSON.parse(await jxa(script)) as {
+        changeCount: number;
+        items: number;
+      };
+      return {
+        token,
+        restored: true,
+        fullFidelity: true,
+        itemCount: restored.items,
+        changeCount: restored.changeCount,
+        characters: entry.text.length,
+        sha256: entry.sha256,
+      };
+    } finally {
+      await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async clipboardWaitChange(
+    previousChangeCount: number,
+    timeoutMs = 2000,
+    pollMs = 50,
+  ) {
+    requireDesktopEnabled();
+    const timeout = Math.min(Math.max(Math.trunc(timeoutMs), 100), 30_000);
+    const poll = Math.min(Math.max(Math.trunc(pollMs), 20), 1000);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeout) {
+      const info = await this.clipboardInfo();
+      if (info.changeCount !== previousChangeCount) {
+        const { text } = await this.clipboardRead();
+        return {
+          changed: true,
+          previousChangeCount,
+          changeCount: info.changeCount,
+          elapsedMs: Date.now() - startedAt,
+          text,
+          characters: text.length,
+          types: info.types,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, poll));
+    }
+
+    const info = await this.clipboardInfo();
+    return {
+      changed: false,
+      previousChangeCount,
+      changeCount: info.changeCount,
+      elapsedMs: Date.now() - startedAt,
+      text: null,
+      characters: 0,
+      types: info.types,
+    };
+  }
+
+  async clipboardCopySelection(timeoutMs = 2000, restore = true) {
+    requireDesktopEnabled();
+    const snapshot = await this.clipboardSnapshot();
+    if (restore && !snapshot.fullFidelityRestore) {
+      return {
+        copied: false,
+        restored: false,
+        reason:
+          snapshot.reason ||
+          "Existing clipboard could not be snapshotted safely; copy was skipped.",
+        snapshot: {
+          types: snapshot.types,
+          totalClipboardBytes: snapshot.totalClipboardBytes,
+          fullFidelityRestore: snapshot.fullFidelityRestore,
+        },
+      };
+    }
+
+    await osascript(
+      'tell application "System Events" to keystroke "c" using {command down}',
+    );
+    const changed = await this.clipboardWaitChange(
+      snapshot.changeCount,
+      timeoutMs,
+      50,
+    );
+
+    let restored = false;
+    if (changed.changed && restore) {
+      await this.clipboardRestore(snapshot.token!);
+      restored = true;
+    }
+
+    return {
+      copied: changed.changed,
+      restored,
+      text: changed.changed ? changed.text : null,
+      characters: changed.characters,
+      elapsedMs: changed.elapsedMs,
+      clipboardTypes: changed.types,
+      reason: changed.changed ? null : "Clipboard did not change after Cmd+C.",
+    };
+  }
+
+  async type(text: string, preserveClipboard = true) {
+    requireDesktopEnabled();
+    const snapshot = preserveClipboard ? await this.clipboardSnapshot() : null;
+    if (snapshot && !snapshot.fullFidelityRestore) {
+      throw new Error(
+        "Refusing to overwrite the clipboard because a full-fidelity snapshot could not be created. Use preserve_clipboard=false only when replacing the current clipboard is acceptable.",
+      );
+    }
+
+    await this.clipboardWrite(text);
+    try {
+      await osascript(
+        'tell application "System Events" to keystroke "v" using {command down}',
+      );
+    } finally {
+      if (snapshot) await this.clipboardRestore(snapshot.token!);
+    }
+    return {
+      typedCharacters: text.length,
+      method: "clipboard-paste",
+      clipboardRestored: Boolean(snapshot),
+    };
   }
 
   async key(

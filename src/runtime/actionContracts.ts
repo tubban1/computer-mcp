@@ -185,12 +185,17 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
     "desktop.screenshot",
     "desktop.screenshot_region",
     "desktop.clipboard_read",
+    "desktop.clipboard_info",
+    "desktop.clipboard_snapshot",
+    "desktop.clipboard_wait_change",
   ].includes(action)) {
     return {
       ...SAFE_READ,
       resources: action.startsWith("desktop.ui_")
         ? [resource("desktop.accessibility", "shared")]
-        : [],
+        : action.startsWith("desktop.clipboard")
+          ? [resource("desktop.clipboard", "shared")]
+          : [],
     };
   }
   if (action === "desktop.open_app") {
@@ -202,6 +207,31 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
       resources: [resource("desktop.focus", "exclusive")],
     };
   }
+  if (action === "desktop.clipboard_restore") {
+    return {
+      riskLevel: "medium",
+      idempotent: true,
+      sideEffects: ["clipboard_restore"],
+      retryPolicy: "automatic",
+      requiresVerification: false,
+      parallelSafe: false,
+      resources: [resource("desktop.clipboard", "exclusive")],
+    };
+  }
+  if (action === "desktop.clipboard_copy_selection") {
+    return {
+      riskLevel: "medium",
+      idempotent: false,
+      sideEffects: ["clipboard_capture", "keyboard_input"],
+      retryPolicy: "automatic",
+      requiresVerification: false,
+      parallelSafe: false,
+      resources: [
+        resource("desktop.input", "exclusive"),
+        resource("desktop.clipboard", "exclusive"),
+      ],
+    };
+  }
   if (["desktop.click", "desktop.type", "desktop.key", "desktop.click_element", "desktop.clipboard_write"].includes(action)) {
     return {
       riskLevel: "high",
@@ -210,7 +240,15 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
       retryPolicy: "manual",
       requiresVerification: true,
       parallelSafe: false,
-      resources: [resource("desktop.input", "exclusive")],
+      resources:
+        action === "desktop.clipboard_write"
+          ? [resource("desktop.clipboard", "exclusive")]
+          : action === "desktop.type"
+            ? [
+                resource("desktop.input", "exclusive"),
+                resource("desktop.clipboard", "exclusive"),
+              ]
+            : [resource("desktop.input", "exclusive")],
     };
   }
 

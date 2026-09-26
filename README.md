@@ -115,6 +115,7 @@ This is the first step toward keeping the model-facing capability surface small 
 Initial reusable Skills:
 
 - `wechat.read`
+- `wechat.copy_selected`
 - `wechat.send`
 - `xhs.publish`
 - `email.compose`
@@ -180,6 +181,7 @@ browser.session
 desktop.focus
 desktop.input
 desktop.accessibility
+desktop.clipboard
 shell
 git:/repo/path
 fs:/path
@@ -201,8 +203,10 @@ The macOS Desktop Provider now supports:
 - semantic click by UI element
 - whole-screen screenshot
 - rectangular region screenshot
-- clipboard read/write
-- Unicode-safe text input through clipboard paste
+- clipboard read/write/info
+- full-fidelity clipboard snapshot/restore up to 16 MiB
+- clipboard change detection and safe copy-selection capture
+- Unicode-safe text input through clipboard paste with clipboard preservation
 
 These capabilities are available through the Primitive ABI and routed actions, so they do not need a large number of additional top-level MCP tools.
 
@@ -286,9 +290,9 @@ Example:
 
 ### Read
 
-`wechat.read` focuses WeChat and reads its Accessibility tree. It can optionally save a screenshot of the WeChat window.
+`wechat.read` uses a clipboard-first fast path. It focuses WeChat, tries Cmd+C on the current selection, captures copied text, restores the previous full pasteboard, then falls back to the Accessibility tree and optional screenshot perception when no selection is copied.
 
-If WeChat does not expose message content through Accessibility, the screenshot can be inspected by a vision-capable client.
+`wechat.copy_selected` is the explicit fast path when the user or another primitive has selected one or more messages. If WeChat exposes no selectable text, Accessibility and screenshot perception remain the fallback.
 
 ### Send
 
@@ -545,7 +549,7 @@ A successful v0.9 tunnel probe should report:
 
 ```text
 server_name=computer-mcp
-server_version=0.9.0
+server_version=0.9.1
 ```
 
 ## Current boundaries
@@ -570,3 +574,25 @@ Likely next steps:
 - dynamic capability retrieval instead of simple keyword matching
 - per-site Skill adapters with verification receipts
 - SSH / Docker / remote-machine Providers
+
+## v0.9.1 — Clipboard Perception Fast Path
+
+v0.9.1 promotes the macOS clipboard from a simple input helper to a first-class perception channel.
+
+The stable `clipboard` Primitive now supports:
+
+- `read`
+- `write`
+- `info`
+- `snapshot`
+- `restore`
+- `wait_change`
+- `copy_selection`
+
+Clipboard snapshots are short-lived in-memory tokens. v0.9.1 captures every pasteboard item/type as binary data and restores it with full fidelity up to a 16 MiB safety cap, including rich text, URLs, images, and application-specific clipboard flavors. If a clipboard exceeds the cap, automatic copy/paste mutation refuses to overwrite it.
+
+`desktop.type` now snapshots and restores the full macOS pasteboard by default.
+
+`wechat.read` uses a clipboard-first fast path: it focuses WeChat, attempts to capture the current selected text via Cmd+C, restores the previous clipboard, and then falls back to Accessibility and optional screenshot perception when no text is copied.
+
+A dedicated `wechat.copy_selected` Skill provides the fastest path when text/messages are already selected in WeChat.

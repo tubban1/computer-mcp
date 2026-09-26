@@ -8,7 +8,8 @@ export type ProviderCapability =
   | "accessibility"
   | "ui-tree"
   | "region-screenshot"
-  | "clipboard";
+  | "clipboard"
+  | "clipboard-transaction";
 
 export interface ProviderStatus {
   id: string;

@@ -112,17 +112,41 @@ const definitions: PrimitiveDefinition[] = [
   {
     id: "clipboard",
     domain: "input",
-    description: "Read or write the macOS clipboard.",
-    ops: ["read", "write"],
+    description:
+      "Read, write, snapshot, restore, monitor, or safely copy the current desktop selection through the macOS clipboard.",
+    ops: [
+      "read",
+      "write",
+      "info",
+      "snapshot",
+      "restore",
+      "wait_change",
+      "copy_selection",
+    ],
     route: (op, args) => {
-      const normalized = requireOp(op, ["read", "write"], "clipboard");
-      return {
-        action:
-          normalized === "read"
-            ? "desktop.clipboard_read"
-            : "desktop.clipboard_write",
-        args,
-      };
+      const normalized = requireOp(
+        op,
+        [
+          "read",
+          "write",
+          "info",
+          "snapshot",
+          "restore",
+          "wait_change",
+          "copy_selection",
+        ],
+        "clipboard",
+      );
+      const action = {
+        read: "desktop.clipboard_read",
+        write: "desktop.clipboard_write",
+        info: "desktop.clipboard_info",
+        snapshot: "desktop.clipboard_snapshot",
+        restore: "desktop.clipboard_restore",
+        wait_change: "desktop.clipboard_wait_change",
+        copy_selection: "desktop.clipboard_copy_selection",
+      }[normalized]!;
+      return { action, args };
     },
   },
   {
