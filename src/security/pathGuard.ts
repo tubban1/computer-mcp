@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 
 export function configuredRoots(): string[] {
   return (process.env.ALLOWED_DIRECTORIES ?? "")
@@ -9,15 +10,35 @@ export function configuredRoots(): string[] {
     .map((value) => path.resolve(value));
 }
 
+export function runtimeOwnedRoots(): string[] {
+  const exposeStaging =
+    (process.env.TASK_STAGING_EXPOSE_TO_FS ?? "true").trim().toLowerCase() !==
+    "false";
+  if (!exposeStaging) return [];
+
+  return [
+    path.resolve(
+      process.env.TASK_STAGING_DIR?.trim() ||
+        path.join(os.homedir(), ".computer-mcp", "staging"),
+    ),
+  ];
+}
+
+export function effectiveRoots(): string[] {
+  return [...new Set([...configuredRoots(), ...runtimeOwnedRoots()])];
+}
+
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function realConfiguredRoots(): Promise<string[]> {
-  const roots = configuredRoots();
+  const roots = effectiveRoots();
   if (roots.length === 0) {
-    throw new Error("No ALLOWED_DIRECTORIES configured. Refusing filesystem access.");
+    throw new Error(
+      "No ALLOWED_DIRECTORIES or runtime-owned staging roots are configured. Refusing filesystem access.",
+    );
   }
 
   const resolved: string[] = [];

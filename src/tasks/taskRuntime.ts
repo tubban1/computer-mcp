@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto";
 import {
   executeRoutedAction,
-  getRouterCatalog,
   validateRoutedAction,
 } from "../router/actionRouter.js";
 import {
-  isActionParallelSafe,
+  executePrimitive,
+  resolvePrimitive,
+  routePrimitive,
+} from "../primitives/primitiveRuntime.js";
+import {
   planActionGraph,
   type GraphStep,
 } from "../router/graphRouter.js";
+import {
+  ensureTaskStage,
+  stageArtifactsFromResult,
+} from "./taskStaging.js";
 import {
   appendTaskEvent,
   deletePersistentTaskRecord,
@@ -116,9 +123,46 @@ function summarizeTask(task: PersistentTask, includeResults = false) {
       failFast: task.defaultFailFast,
     },
     storage: getTaskStorageInfo(),
+    memoryLayers: {
+      working: {
+        description:
+          "Durable task working memory: succeeded step outputs are addressable through $ref.",
+        succeededOutputs: task.steps.filter((step) => step.state === "succeeded").length,
+      },
+      staging: {
+        description:
+          "File-backed intermediate asset staging for task artifacts.",
+        root: task.stagingRoot ?? null,
+        manifestPath: task.stagingManifestPath ?? null,
+        artifactCount: task.stagedArtifacts?.length ?? 0,
+        bytes:
+          task.stagedArtifacts?.reduce((sum, artifact) => sum + artifact.bytes, 0) ??
+          0,
+      },
+      episodic: {
+        description:
+          "Task execution history, lifecycle events, retries, and recovery notes.",
+        eventCount: task.events.length,
+        runCount: task.runCount,
+      },
+      semantic: {
+        description:
+          "Long-term promoted knowledge/pattern memory is a separate AgentOS Runtime plane and is not yet auto-promoted.",
+        available: false,
+      },
+    },
+    staging: {
+      root: task.stagingRoot ?? null,
+      manifestPath: task.stagingManifestPath ?? null,
+      artifactCount: task.stagedArtifacts?.length ?? 0,
+      artifacts: task.stagedArtifacts ?? [],
+    },
     steps: task.steps.map((step) => ({
       id: step.id,
       action: step.action,
+      executionKind: step.executionKind ?? "action",
+      primitive: step.primitive ?? null,
+      op: step.op ?? null,
       dependsOn: step.dependsOn,
       parallelSafe: step.parallelSafe,
       retryPolicy: step.retryPolicy ?? (step.parallelSafe ? "automatic" : "manual"),
@@ -210,8 +254,47 @@ async function recoverInterruptedTask(task: PersistentTask): Promise<PersistentT
 }
 
 async function loadTask(id: string): Promise<PersistentTask> {
-  return await recoverInterruptedTask(await readPersistentTask(id));
+  const task = await recoverInterruptedTask(await readPersistentTask(id));
+  const stage = await ensureTaskStage(task.id);
+  let changed = false;
+
+  if (!task.stagingRoot) {
+    task.stagingRoot = stage.root;
+    appendTaskEvent(task, {
+      type: "staging_initialized",
+      message: `Initialized task staging at ${stage.root}.`,
+    });
+    changed = true;
+  }
+
+  if (!task.stagingManifestPath) {
+    task.stagingManifestPath = stage.manifestPath;
+    changed = true;
+  }
+
+  if (!task.stagedArtifacts) {
+    task.stagedArtifacts = stage.artifacts ?? [];
+    changed = true;
+  } else if (stage.artifacts.length > task.stagedArtifacts.length) {
+    const known = new Set(task.stagedArtifacts.map((artifact) => artifact.id));
+    task.stagedArtifacts = [
+      ...task.stagedArtifacts,
+      ...stage.artifacts.filter((artifact) => !known.has(artifact.id)),
+    ];
+    changed = true;
+  }
+
+  if (changed) await writePersistentTask(task);
+  return task;
 }
+
+export type PrimitiveTaskStep = {
+  id: string;
+  primitive: string;
+  op: string;
+  args?: Record<string, unknown>;
+  dependsOn?: string[];
+};
 
 export async function createPersistentTask(
   label: string,
@@ -230,6 +313,7 @@ export async function createPersistentTask(
 
   const now = new Date().toISOString();
   const id = newTaskId();
+  const stage = await ensureTaskStage(id);
 
   const task: PersistentTask = {
     version: 1,
@@ -246,6 +330,9 @@ export async function createPersistentTask(
     runCount: 0,
     pauseRequested: false,
     cancelRequested: false,
+    stagingRoot: stage.root,
+    stagingManifestPath: stage.manifestPath,
+    stagedArtifacts: [],
     steps: steps.map((step) => {
       const planned = plan.find((item) => item.id === step.id);
       if (!planned) throw new Error(`Missing plan entry for ${step.id}.`);
@@ -253,6 +340,7 @@ export async function createPersistentTask(
       return {
         id: step.id,
         action: step.action,
+        executionKind: "action",
         args: step.args ?? {},
         dependsOn: planned.dependsOn,
         parallelSafe: planned.parallelSafe,
@@ -271,6 +359,103 @@ export async function createPersistentTask(
   appendTaskEvent(task, {
     type: "task_created",
     message: `Created persistent task with ${task.steps.length} steps.`,
+  });
+  appendTaskEvent(task, {
+    type: "staging_initialized",
+    message: `Initialized task staging at ${stage.root}.`,
+  });
+
+  await writePersistentTask(task);
+  return summarizeTask(task, false);
+}
+
+export async function createPersistentPrimitiveTask(
+  label: string,
+  steps: PrimitiveTaskStep[],
+  options?: { maxConcurrency?: number; failFast?: boolean },
+) {
+  if (steps.length === 0) {
+    throw new Error("Persistent Primitive task requires at least one step.");
+  }
+  if (steps.length > 50) {
+    throw new Error("Persistent Primitive task accepts at most 50 steps.");
+  }
+
+  const routedSteps: GraphStep[] = steps.map((step) => {
+    const routed = routePrimitive(step.primitive, step.op, step.args ?? {});
+    return {
+      id: step.id,
+      action: routed.routedAction,
+      args: step.args ?? {},
+      dependsOn: step.dependsOn,
+    };
+  });
+
+  const plan = planActionGraph(routedSteps);
+  const validationErrors = plan.filter((step) => step.validationError);
+  if (validationErrors.length > 0) {
+    throw new Error(
+      validationErrors
+        .map((step) => `${step.id}: ${step.validationError}`)
+        .join("\n"),
+    );
+  }
+
+  const now = new Date().toISOString();
+  const id = newTaskId();
+  const stage = await ensureTaskStage(id);
+
+  const task: PersistentTask = {
+    version: 1,
+    id,
+    label,
+    createdAt: now,
+    updatedAt: now,
+    status: "pending",
+    defaultMaxConcurrency: Math.min(
+      Math.max(options?.maxConcurrency ?? 4, 1),
+      8,
+    ),
+    defaultFailFast: options?.failFast ?? true,
+    runCount: 0,
+    pauseRequested: false,
+    cancelRequested: false,
+    stagingRoot: stage.root,
+    stagingManifestPath: stage.manifestPath,
+    stagedArtifacts: [],
+    steps: steps.map((step) => {
+      const routed = routePrimitive(step.primitive, step.op, step.args ?? {});
+      const planned = plan.find((item) => item.id === step.id);
+      if (!planned) throw new Error(`Missing plan entry for ${step.id}.`);
+
+      return {
+        id: step.id,
+        action: routed.routedAction,
+        executionKind: "primitive",
+        primitive: routed.canonicalPrimitive,
+        op: step.op,
+        args: step.args ?? {},
+        dependsOn: planned.dependsOn,
+        parallelSafe: planned.parallelSafe,
+        retryPolicy: planned.contract.retryPolicy,
+        riskLevel: planned.contract.riskLevel,
+        sideEffects: planned.contract.sideEffects,
+        requiresVerification: planned.contract.requiresVerification,
+        resources: planned.contract.resources,
+        state: "pending",
+        attempts: 0,
+      } satisfies PersistentTaskStep;
+    }),
+    events: [],
+  };
+
+  appendTaskEvent(task, {
+    type: "task_created",
+    message: `Created persistent Primitive task with ${task.steps.length} steps.`,
+  });
+  appendTaskEvent(task, {
+    type: "staging_initialized",
+    message: `Initialized task staging at ${stage.root}.`,
   });
 
   await writePersistentTask(task);
@@ -297,6 +482,14 @@ export async function listPersistentTasks() {
       failed: task.steps.filter((step) => step.state === "failed").length,
       needsReview: task.steps.filter((step) => step.state === "needs_review").length,
     },
+    staging: {
+      root: task.stagingRoot ?? null,
+      manifestPath: task.stagingManifestPath ?? null,
+      artifactCount: task.stagedArtifacts?.length ?? 0,
+      bytes:
+        task.stagedArtifacts?.reduce((sum, artifact) => sum + artifact.bytes, 0) ??
+        0,
+    },
   }));
 }
 
@@ -317,6 +510,9 @@ export async function deletePersistentTask(id: string) {
     label: task.label,
     previousStatus: task.status,
     deleted: true,
+    stagingPreserved: true,
+    stagingRoot: task.stagingRoot ?? null,
+    stagedArtifactCount: task.stagedArtifacts?.length ?? 0,
   };
 }
 
@@ -637,7 +833,31 @@ export async function runPersistentTask(
         wave.map(async (step) => {
           const stepStartedAt = Date.now();
           try {
-            const resolvedArgs = resolveReferences(step.args, outputs);
+            const resolvedArgs = resolveReferences(step.args, outputs) as Record<
+              string,
+              unknown
+            >;
+
+            if (step.executionKind === "primitive" && step.primitive && step.op) {
+              const resolved = resolvePrimitive(
+                step.primitive,
+                step.op,
+                resolvedArgs,
+              );
+              const executed = await executePrimitive(
+                step.primitive,
+                step.op,
+                resolved.validation.args,
+              );
+              return {
+                id: step.id,
+                ok: true as const,
+                provider: executed.provider,
+                durationMs: Date.now() - stepStartedAt,
+                result: executed.result,
+              };
+            }
+
             validateRoutedAction(step.action, resolvedArgs);
             const executed = await executeRoutedAction(
               step.action,
@@ -702,6 +922,45 @@ export async function runPersistentTask(
             stepId: step.id,
             message: `${step.action} succeeded in ${result.durationMs} ms.`,
           });
+
+          try {
+            const staged = await stageArtifactsFromResult(
+              task.id,
+              step.id,
+              result.result,
+              task.stagedArtifacts ?? [],
+            );
+            if (staged.length > 0) {
+              task.stagedArtifacts = [...(task.stagedArtifacts ?? []), ...staged];
+              if (
+                step.result &&
+                typeof step.result === "object" &&
+                !Array.isArray(step.result)
+              ) {
+                step.result = {
+                  ...(step.result as Record<string, unknown>),
+                  staging: {
+                    artifacts: staged,
+                  },
+                };
+              }
+              for (const artifact of staged) {
+                appendTaskEvent(task, {
+                  type: "artifact_staged",
+                  stepId: step.id,
+                  message: `Staged ${artifact.filename} (${artifact.bytes} bytes).`,
+                });
+              }
+            }
+          } catch (error) {
+            appendTaskEvent(task, {
+              type: "staging_warning",
+              stepId: step.id,
+              message:
+                "Step succeeded, but artifact staging failed: " +
+                (error instanceof Error ? error.message : String(error)),
+            });
+          }
         } else {
           step.state = "failed";
           step.error = result.error;

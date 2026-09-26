@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { StagedArtifact } from "./taskStaging.js";
 import {
   createCipheriv,
   createDecipheriv,
@@ -28,6 +29,9 @@ export type PersistentStepState =
 export interface PersistentTaskStep {
   id: string;
   action: string;
+  executionKind?: "action" | "primitive";
+  primitive?: string;
+  op?: string;
   args: Record<string, unknown>;
   dependsOn: string[];
   parallelSafe: boolean;
@@ -72,6 +76,9 @@ export interface PersistentTask {
   cancelledAt?: string;
   pauseRequested: boolean;
   cancelRequested: boolean;
+  stagingRoot?: string;
+  stagingManifestPath?: string;
+  stagedArtifacts?: StagedArtifact[];
   steps: PersistentTaskStep[];
   events: PersistentTaskEvent[];
 }

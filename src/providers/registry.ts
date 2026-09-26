@@ -1,5 +1,5 @@
 import { envFlag } from "../security/capabilities.js";
-import { configuredRoots } from "../security/pathGuard.js";
+import { configuredRoots, runtimeOwnedRoots } from "../security/pathGuard.js";
 import type { ComputerProvider, ProviderStatus } from "./types.js";
 import { browserProvider } from "./browserProvider.js";
 import { desktopProvider } from "./desktopProvider.js";
@@ -24,6 +24,7 @@ const filesystemProvider = new StaticProvider("filesystem", "Filesystem", async 
   capabilities: ["filesystem"],
   details: {
     allowedDirectories: configuredRoots(),
+    runtimeOwnedDirectories: runtimeOwnedRoots(),
     write: envFlag("ALLOW_WRITE", true),
     delete: envFlag("ALLOW_DELETE", false),
   },

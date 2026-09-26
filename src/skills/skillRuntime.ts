@@ -3,10 +3,17 @@ import {
   assertAllowedExistingPath,
   assertAllowedTargetPath,
 } from "../security/pathGuard.js";
-import { executePrimitive } from "../primitives/primitiveRuntime.js";
+import {
+  executePrimitive,
+  getPrimitiveCatalog,
+  PRIMITIVE_ABI_VERSION,
+} from "../primitives/primitiveRuntime.js";
 import { resourceArbiter } from "../runtime/resourceArbiter.js";
-import { getPrimitiveCatalog } from "../primitives/primitiveRuntime.js";
 import { getProviderStatuses } from "../providers/registry.js";
+import {
+  createPersistentPrimitiveTask,
+  type PrimitiveTaskStep,
+} from "../tasks/taskRuntime.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -28,6 +35,143 @@ type SkillDefinition = {
   inputs: Record<string, string>;
   run: (args: JsonObject) => Promise<unknown>;
   dryRunPlan: (args: JsonObject) => unknown;
+};
+
+type SkillExecutionMode = "inline" | "durable";
+
+type SkillRuntimeMetadata = {
+  skillVersion: string;
+  requiredPrimitiveAbi: number;
+  requiredPrimitives: string[];
+  executionMode: SkillExecutionMode;
+  memoryPolicy: {
+    working: "runtime";
+    staging: "available_when_durable";
+    episodic: "task_events_when_durable";
+    semanticPromotion: "manual";
+  };
+};
+
+const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
+  "runtime.compile_task": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "durable",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "wechat.read": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [
+      "app.lifecycle",
+      "clipboard",
+      "ui.query",
+      "vision.capture",
+    ],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "wechat.copy_selected": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["app.lifecycle", "clipboard"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "wechat.copy_at": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["app.lifecycle", "pointer.click", "clipboard"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "wechat.read_points": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["app.lifecycle", "pointer.click", "clipboard"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "wechat.send": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [
+      "app.lifecycle",
+      "keyboard.press",
+      "keyboard.type",
+      "ui.query",
+      "pointer.click",
+    ],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "xhs.publish": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["web.open", "web.transfer", "web.act", "web.query"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "email.compose": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["web.open", "web.act"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "media.transcode": {
+    skillVersion: "0.2.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["fs.manage", "sys.exec"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
 };
 
 const sleep = async (ms: number) =>
@@ -84,6 +228,15 @@ async function withSkillResources<T>(
     lease.release();
   }
 }
+
+const DURABLE_TASK_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: false,
+  sideEffects: ["persistent_task_creation", "staging_creation"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [],
+};
 
 const WECHAT_READ_CONTRACT: SkillContract = {
   riskLevel: "medium",
@@ -151,6 +304,98 @@ const MEDIA_CONTRACT: SkillContract = {
 };
 
 const skills: SkillDefinition[] = [
+  {
+    id: "runtime.compile_task",
+    domain: "runtime",
+    description:
+      "Compile a complex Primitive graph into an encrypted persistent task with Working Memory, Staging, Episodic events, pause/resume, and crash recovery.",
+    keywords: [
+      "durable",
+      "persistent task",
+      "complex task",
+      "workflow",
+      "复杂任务",
+      "持久任务",
+      "staging",
+      "memory",
+    ],
+    contract: DURABLE_TASK_CONTRACT,
+    inputs: {
+      label: "Human-readable task label.",
+      steps:
+        "Array of Primitive steps: {id, primitive, op, args?, depends_on?}. $ref dependencies are supported.",
+      max_concurrency: "Maximum parallel Primitive steps; default 4, max 8.",
+      fail_fast: "Stop after the first failed execution wave; default true.",
+    },
+    dryRunPlan: (args) => ({
+      durable: true,
+      primitiveAbi: PRIMITIVE_ABI_VERSION,
+      label: args.label ?? null,
+      stepCount: Array.isArray(args.steps) ? args.steps.length : 0,
+      steps: Array.isArray(args.steps) ? args.steps : [],
+      memory: ["working", "staging", "episodic"],
+      semanticPromotion: "manual",
+    }),
+    run: async (args) => {
+      const label = requiredText(args, "label");
+      const rawSteps = Array.isArray(args.steps) ? args.steps : [];
+      if (rawSteps.length === 0) {
+        throw new Error("runtime.compile_task requires at least one Primitive step.");
+      }
+      if (rawSteps.length > 50) {
+        throw new Error("runtime.compile_task accepts at most 50 Primitive steps.");
+      }
+
+      const steps: PrimitiveTaskStep[] = rawSteps.map((raw, index) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          throw new Error(`Invalid Primitive task step at index ${index}.`);
+        }
+        const value = raw as Record<string, unknown>;
+        const id = typeof value.id === "string" ? value.id.trim() : "";
+        const primitive =
+          typeof value.primitive === "string" ? value.primitive.trim() : "";
+        const op = typeof value.op === "string" ? value.op.trim() : "";
+
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+          throw new Error(
+            `Invalid Primitive task step id at index ${index}: "${id}".`,
+          );
+        }
+        if (!primitive) {
+          throw new Error(`Missing primitive for task step "${id}".`);
+        }
+        if (!op) {
+          throw new Error(`Missing op for task step "${id}".`);
+        }
+
+        const stepArgs =
+          value.args && typeof value.args === "object" && !Array.isArray(value.args)
+            ? (value.args as JsonObject)
+            : {};
+        const dependsOn = Array.isArray(value.depends_on)
+          ? value.depends_on.filter(
+              (item): item is string => typeof item === "string",
+            )
+          : [];
+
+        return {
+          id,
+          primitive,
+          op,
+          args: stepArgs,
+          dependsOn,
+        };
+      });
+
+      return await createPersistentPrimitiveTask(label, steps, {
+        maxConcurrency:
+          typeof args.max_concurrency === "number"
+            ? Math.min(Math.max(Math.trunc(args.max_concurrency), 1), 8)
+            : 4,
+        failFast: optionalBoolean(args, "fail_fast", true),
+      });
+    },
+  },
   {
     id: "wechat.read",
     domain: "communication",
@@ -1115,8 +1360,45 @@ const skills: SkillDefinition[] = [
 
 const byId = new Map(skills.map((skill) => [skill.id, skill]));
 
+function metadataForSkill(skill: SkillDefinition): SkillRuntimeMetadata {
+  const metadata = SKILL_RUNTIME_METADATA[skill.id];
+  if (!metadata) {
+    throw new Error(`Missing Skill Runtime metadata for "${skill.id}".`);
+  }
+  return metadata;
+}
+
+function assertSkillCompatibility(skill: SkillDefinition): SkillRuntimeMetadata {
+  const metadata = metadataForSkill(skill);
+  if (metadata.requiredPrimitiveAbi > PRIMITIVE_ABI_VERSION) {
+    throw new Error(
+      `Skill "${skill.id}" requires Primitive ABI ${metadata.requiredPrimitiveAbi}, but runtime ABI is ${PRIMITIVE_ABI_VERSION}.`,
+    );
+  }
+
+  const available = new Set(
+    getPrimitiveCatalog()
+      .filter((entry: any) => entry.canonical === true)
+      .map((entry: any) => entry.id),
+  );
+  const missing = metadata.requiredPrimitives.filter(
+    (primitive) => !available.has(primitive),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Skill "${skill.id}" requires unavailable Primitive(s): ${missing.join(", ")}.`,
+    );
+  }
+  return metadata;
+}
+
 export function getSkillCatalog() {
-  return skills.map(({ run: _run, dryRunPlan: _dryRunPlan, keywords: _keywords, ...skill }) => skill);
+  return skills.map(
+    ({ run: _run, dryRunPlan: _dryRunPlan, keywords: _keywords, ...skill }) => ({
+      ...skill,
+      ...metadataForSkill(skill as SkillDefinition),
+    }),
+  );
 }
 
 export async function executeSkill(
@@ -1131,11 +1413,14 @@ export async function executeSkill(
     );
   }
 
+  const runtimeMetadata = assertSkillCompatibility(skill);
+
   if (dryRun) {
     return {
       dryRun: true,
       skill: skill.id,
       domain: skill.domain,
+      runtime: runtimeMetadata,
       contract: skill.contract,
       plan: skill.dryRunPlan(args),
     };
@@ -1146,6 +1431,7 @@ export async function executeSkill(
   return {
     skill: skill.id,
     domain: skill.domain,
+    runtime: runtimeMetadata,
     contract: skill.contract,
     durationMs: Date.now() - startedAt,
     result,
@@ -1172,6 +1458,7 @@ export async function getCapabilityManifest(goal = "") {
       domain: skill.domain,
       description: skill.description,
       inputs: skill.inputs,
+      runtime: metadataForSkill(skill),
       contract: skill.contract,
       relevanceScore: score,
     }));
@@ -1187,7 +1474,30 @@ export async function getCapabilityManifest(goal = "") {
         version: 1,
         stability: "candidate",
       },
-      persistentTasks: "v0.8",
+      skillAbi: {
+        runtimeMetadata: [
+          "skillVersion",
+          "requiredPrimitiveAbi",
+          "requiredPrimitives",
+          "executionMode",
+          "memoryPolicy",
+        ],
+        executionContract: [
+          "riskLevel",
+          "idempotent",
+          "sideEffects",
+          "requiresVerification",
+          "retryPolicy",
+          "resources",
+        ],
+      },
+      memoryPlane: {
+        working: "durable task step outputs + $ref",
+        staging: "file-backed task artifacts",
+        episodic: "task-local event history",
+        semantic: "planned explicit promotion",
+      },
+      persistentTasks: "v0.8 + v0.9.5 Primitive-task path",
       dependencyGraph: "v0.7",
       providerRouter: "v0.6",
       providers: "v0.5",

@@ -53,7 +53,7 @@ import {
 } from "./tools/transactionOps.js";
 import { appendAudit, getAuditLogPath, readAuditLog, sanitizeAuditArgs } from "./audit.js";
 import { envFlag } from "./security/capabilities.js";
-import { configuredRoots } from "./security/pathGuard.js";
+import { configuredRoots, runtimeOwnedRoots } from "./security/pathGuard.js";
 import { getProviderStatuses } from "./providers/registry.js";
 import { browserProvider } from "./providers/browserProvider.js";
 import { desktopProvider } from "./providers/desktopProvider.js";
@@ -226,7 +226,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.4",
+    version: "0.9.5",
   });
 
   server.tool(
@@ -891,8 +891,9 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.4",
+          version: "0.9.5",
           allowedDirectories: configuredRoots(),
+          runtimeOwnedDirectories: runtimeOwnedRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
           shell: envFlag("ALLOW_SHELL", false),
@@ -901,8 +902,11 @@ function createServer() {
           browser: envFlag("ALLOW_BROWSER", false),
           gui: envFlag("ALLOW_GUI", false),
           persistentTasks: true,
+          taskStaging: true,
+          durablePrimitiveTasks: true,
           primitiveAbi: true,
           skillRuntime: true,
+          skillAbi: true,
           resourceArbiter: true,
           desktopPerception: envFlag("ALLOW_GUI", false),
           nativeMacHelper: true,
@@ -1578,7 +1582,7 @@ function createServer() {
 
   server.tool(
     "task_create",
-    "Create an encrypted persistent dependency-graph task that can be resumed after chat, tunnel, MCP server, or computer restarts. Task definitions and step outputs are stored locally with AES-256-GCM.",
+    "Create an encrypted persistent dependency-graph task that can be resumed after chat, tunnel, MCP server, or computer restarts. Task definitions/step outputs use AES-256-GCM, and file results are automatically preserved in task-local staging.",
     {
       label: z.string().min(1).max(200),
       steps: z.array(
@@ -1664,7 +1668,7 @@ function createServer() {
 
   server.tool(
     "task_status",
-    "Read one persistent task status. Set include_results=true to include stored step outputs needed for detailed inspection.",
+    "Read one persistent task status, including Working/Staging/Episodic memory summaries. Set include_results=true to include stored step outputs and staged-artifact references.",
     {
       task_id: z.string(),
       include_results: z.boolean().optional(),
@@ -1887,7 +1891,7 @@ function createServer() {
 
   server.tool(
     "skill_run",
-    "Run a reusable v0.9 Skill such as wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Consequential skills default to preparation-only behavior unless their explicit send/publish flag is true.",
+    "Run an AgentOS Runtime Skill such as runtime.compile_task, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Durable Skills may compile Primitive graphs into persistent tasks; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.",
     {
       skill: z.string().min(1),
       args: z.record(z.unknown()).optional(),
@@ -1976,7 +1980,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.4",
+    version: "0.9.5",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1986,8 +1990,11 @@ app.get("/health", (_req, res) => {
       browser: envFlag("ALLOW_BROWSER", false),
       gui: envFlag("ALLOW_GUI", false),
       persistentTasks: true,
+      taskStaging: true,
+      durablePrimitiveTasks: true,
       primitiveAbi: true,
       skillRuntime: true,
+      skillAbi: true,
       resourceArbiter: true,
       desktopPerception: envFlag("ALLOW_GUI", false),
       nativeMacHelper: true,
@@ -1999,5 +2006,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.9.4 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.5 listening on http://127.0.0.1:${port}/mcp`);
 });

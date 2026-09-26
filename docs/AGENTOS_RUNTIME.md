@@ -210,6 +210,21 @@ v0.9.4 tightens the architecture boundary:
 - built-in Skills execute through the L1 Primitive ISA rather than directly invoking L0.5 Actions.
 - `npm run verify:isa` checks the L2→L1 dependency boundary and catalog invariants.
 
+
+v0.9.5 adds the durable-memory foundation:
+
+- persistent tasks can be represented internally as Primitive graphs
+- Task Working Memory persists step outputs and $ref state
+- task-local Staging preserves intermediate file artifacts with hashes and provenance
+- downstream Primitive steps can consume staged copies through $ref
+- task event history forms task-local Episodic Memory
+- Skill metadata declares version, Primitive ABI requirements, execution mode, and memory policy
+- Semantic Memory remains an explicit future promotion layer rather than implicit auto-learning
+
+Memory architecture: MEMORY_AND_STAGING.md
+
+Skill ABI: SKILL_ABI.md
+
 ### v1.0 readiness
 
 AgentOS Runtime should not be called 1.0 until these are stable:

@@ -10,6 +10,10 @@ Architecture and 1.0 criteria: [`docs/AGENTOS_RUNTIME.md`](docs/AGENTOS_RUNTIME.
 
 L1 Primitive ISA review: [`docs/L1_PRIMITIVE_ISA_REVIEW.md`](docs/L1_PRIMITIVE_ISA_REVIEW.md)
 
+Memory & staging model: [`docs/MEMORY_AND_STAGING.md`](docs/MEMORY_AND_STAGING.md)
+
+Skill ABI: [`docs/SKILL_ABI.md`](docs/SKILL_ABI.md)
+
 ## v0.9 — Primitive & Skill Runtime
 
 v0.9 incorporates the strongest architectural ideas from the earlier Owl Lab Agent OS work without adding a second LLM planner.
@@ -587,7 +591,7 @@ A successful v0.9 tunnel probe should report:
 
 ```text
 server_name=computer-mcp
-server_version=0.9.4
+server_version=0.9.5
 ```
 
 ## Current boundaries
@@ -680,8 +684,8 @@ Modes:
 Use the Primitive ABI to inspect or request permissions:
 
 ```text
-primitive_call("app.lifecycle", "helper_status")
-primitive_call("app.lifecycle", "request_permissions")
+primitive_call("admin.permission", "status")
+primitive_call("admin.permission", "request")
 ```
 
 The helper currently owns native Accessibility actions, keyboard/mouse input, app/window inspection, UI-tree reads, and screenshot execution. Clipboard state remains managed by the v0.9.1 full-fidelity clipboard transaction layer.
@@ -768,3 +772,73 @@ Key changes:
 - `npm run verify:isa` checks Primitive metadata, aliases, tiering, and the L2 Skill → L1 Primitive dependency boundary.
 
 Because the top-level MCP tool schema is unchanged, ordinary v0.9.4 Skill/Primitive updates do not require a ChatGPT **Refresh Tools** step once `primitive_call` / `skill_run` are already connected.
+
+
+## v0.9.5 — Durable Task Memory & Staging
+
+v0.9.5 adds the first explicit AgentOS Runtime memory plane for complex tasks and future durable Skills.
+
+The task runtime now exposes four memory layers:
+
+- **Working Memory** — succeeded step outputs and $ref values, stored inside the encrypted persistent task record.
+- **Staging / Artifact Memory** — file-backed intermediate assets under ~/.computer-mcp/staging/<task_id>/.
+- **Episodic Memory** — task events, retries, runs, pause/cancel/recovery history.
+- **Semantic Memory** — intentionally not auto-promoted yet; future promotion will require explicit quality/privacy gates.
+
+Persistent tasks automatically create:
+
+    manifest.json
+    inputs/
+    research/
+    drafts/
+    assets/
+    outputs/
+    scratch/
+
+The staging manifest records task/artifact provenance independently of the encrypted task state. Deleting a task record preserves staging by default so intermediate/final assets are not destroyed accidentally; retention/GC policy comes next.
+
+When a successful task step returns an absolute file path inside an allowed workspace, the runtime automatically copies that file into staging, records SHA-256/size/source/step metadata, and enriches object results with:
+
+    result.staging.artifacts[]
+
+A later task step can consume the durable staged copy with normal $ref syntax, for example:
+
+    {
+      "path": {
+        "$ref": "render.staging.artifacts.0.stagedPath"
+      }
+    }
+
+The staging root is a runtime-owned filesystem root when TASK_STAGING_EXPOSE_TO_FS=true, allowing later filesystem/browser/media Primitives to consume preserved artifacts.
+
+v0.9.5 also adds an internal **Persistent Primitive Task** path. Complex durable workflows can now store Primitive/op metadata per step and execute:
+
+    Persistent Task
+        ↓
+    L1 Primitive ISA
+        ↓
+    L0.5 Action Contract
+        ↓
+    Resource Arbiter
+        ↓
+    Provider
+
+Legacy Action-based persistent tasks remain supported.
+
+Skill catalog entries now declare runtime compatibility metadata:
+
+    skillVersion
+    requiredPrimitiveAbi
+    requiredPrimitives
+    executionMode
+    memoryPolicy
+
+Application-specific built-in Skills remain executionMode=inline. v0.9.5 adds the generic durable Skill `runtime.compile_task`, which accepts a Primitive graph and emits a Persistent Primitive Task without changing the top-level MCP schema. Future complex app Skills can compile through the same internal path.
+
+Verification:
+
+    npm run verify:isa
+    npm run verify:skill-abi
+    npm run verify:task-memory
+
+The task-memory verifier creates a real Primitive task, stages an intermediate file, reads the staged copy from a downstream Primitive through $ref, verifies Working/Episodic state, and cleans up the smoke task.

@@ -564,7 +564,7 @@ export function getPrimitiveCatalog() {
   return [...canonical, ...aliases];
 }
 
-export function resolvePrimitive(
+export function routePrimitive(
   primitive: string,
   op: string,
   args: JsonObject = {},
@@ -579,7 +579,6 @@ export function resolvePrimitive(
   }
 
   const routed = definition.route(op, args);
-  const validated = validateRoutedAction(routed.action, routed.args);
   const opMetadata = definition.opMetadata?.[op.trim().toLowerCase()] ?? null;
   return {
     primitive,
@@ -605,6 +604,19 @@ export function resolvePrimitive(
         }
       : primitiveMetadata(definition)),
     routedAction: routed.action,
+    routedArgs: routed.args,
+  };
+}
+
+export function resolvePrimitive(
+  primitive: string,
+  op: string,
+  args: JsonObject = {},
+) {
+  const routed = routePrimitive(primitive, op, args);
+  const validated = validateRoutedAction(routed.routedAction, routed.routedArgs);
+  return {
+    ...routed,
     validation: validated,
   };
 }
