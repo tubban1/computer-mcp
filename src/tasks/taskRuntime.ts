@@ -11,6 +11,7 @@ import {
 } from "../router/graphRouter.js";
 import {
   appendTaskEvent,
+  deletePersistentTaskRecord,
   getTaskStorageInfo,
   listPersistentTaskRecords,
   readPersistentTask,
@@ -284,6 +285,26 @@ export async function listPersistentTasks() {
       needsReview: task.steps.filter((step) => step.state === "needs_review").length,
     },
   }));
+}
+
+export async function deletePersistentTask(id: string) {
+  if (activeRuns.has(id)) {
+    throw new Error("Cannot delete a persistent task while it is actively running.");
+  }
+
+  const task = await loadTask(id);
+  if (task.status === "running") {
+    throw new Error("Cannot delete a task that is still marked running.");
+  }
+
+  await deletePersistentTaskRecord(id);
+  controlSignals.delete(id);
+  return {
+    id,
+    label: task.label,
+    previousStatus: task.status,
+    deleted: true,
+  };
 }
 
 export async function getPersistentTaskStatus(
