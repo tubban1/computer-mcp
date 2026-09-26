@@ -60,7 +60,7 @@ Session phase:
 }
 ```
 
-Supported session operations are `identify`, `capture_latest`, and `send`.
+Supported session operations are `identify`, `probe`, `capture_latest`, and `send`. `probe` is especially useful for low-interruption endpoints such as WeChat because it can observe change without consuming the message.
 
 ## Carry
 

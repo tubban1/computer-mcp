@@ -1,6 +1,6 @@
 # AgentOS Runtime Memory & Staging
 
-Status: **v0.9.9 foundation**
+Status: **v0.9.10 foundation**
 
 AgentOS Runtime treats memory as a runtime plane beside the Primitive ISA, not as a replacement for the ISA.
 
@@ -268,7 +268,7 @@ Future options include encrypted dormant staging, sensitivity labels, TTL/garbag
 Before AgentOS Runtime v1.0:
 
 1. Freeze the durable Skill compiler contract.
-2. Replace/augment feature-hash vectors with a pluggable neural embedding provider while preserving the recall contract.
+2. Add embedding cache/rotation and controlled background re-embedding while preserving historical provider descriptors.
 3. Add staging TTL, selection/finalization, and garbage collection.
 4. Add artifact sensitivity and retention metadata.
 5. Expand memory conformance tests and promotion policy fixtures.

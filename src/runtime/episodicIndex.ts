@@ -11,12 +11,15 @@ import {
   writeGlobalEpisode,
   type GlobalEpisodeRecord,
 } from "./episodicStore.js";
+import { hybridRetrievalScore } from "./retrievalVector.js";
 import {
-  hybridRetrievalScore,
-  LOCAL_VECTOR_DIMENSIONS,
-  LOCAL_VECTORIZER,
-  vectorizeText,
-} from "./retrievalVector.js";
+  embedQueryForDescriptor,
+  embedTexts,
+  embeddingDescriptorKey,
+  getEmbeddingProviderStatus,
+  legacyFeatureHashDescriptor,
+  type EmbeddingDescriptor,
+} from "./embeddingProvider.js";
 
 const TERMINAL = new Set<PersistentTaskStatus>([
   "completed",
@@ -67,7 +70,9 @@ function buildSearchableText(task: PersistentTask): string {
     .trim();
 }
 
-export function taskToGlobalEpisode(task: PersistentTask): GlobalEpisodeRecord {
+export async function taskToGlobalEpisode(
+  task: PersistentTask,
+): Promise<GlobalEpisodeRecord> {
   if (!TERMINAL.has(task.status)) {
     throw new Error(
       `Only terminal tasks can enter the global episodic index; ${task.id} is ${task.status}.`,
@@ -75,6 +80,8 @@ export function taskToGlobalEpisode(task: PersistentTask): GlobalEpisodeRecord {
   }
 
   const searchableText = buildSearchableText(task);
+  const embedding = await embedTexts([searchableText]);
+  const vector = embedding.embeddings[0]!;
   const now = new Date().toISOString();
   return {
     version: 1,
@@ -105,9 +112,12 @@ export function taskToGlobalEpisode(task: PersistentTask): GlobalEpisodeRecord {
       .update(searchableText.normalize("NFKC"))
       .digest("hex"),
     retrieval: {
-      vectorizer: LOCAL_VECTORIZER,
-      dimensions: LOCAL_VECTOR_DIMENSIONS,
-      vector: vectorizeText(searchableText),
+      embedding: {
+        descriptor: embedding.provider,
+        vector,
+      },
+      dimensions: vector.length,
+      vector,
     },
   };
 }
@@ -116,7 +126,7 @@ export async function indexTaskEpisode(task: PersistentTask) {
   if (!TERMINAL.has(task.status)) {
     return { indexed: false, reason: "task_not_terminal", taskId: task.id };
   }
-  const record = taskToGlobalEpisode(task);
+  const record = await taskToGlobalEpisode(task);
   await writeGlobalEpisode(record);
   return {
     indexed: true,
@@ -169,21 +179,48 @@ export async function searchGlobalEpisodes(
   const mode = options?.mode ?? "hybrid";
   const statuses = new Set(options?.statuses ?? []);
   const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100);
-  const records = await listGlobalEpisodes();
+  const records = (await listGlobalEpisodes()).filter(
+    (record) => statuses.size === 0 || statuses.has(record.status),
+  );
+
+  const queryVectors = new Map<string, number[] | null>();
+  if (query.trim() && mode !== "lexical") {
+    for (const record of records) {
+      const descriptor: EmbeddingDescriptor =
+        record.retrieval.embedding?.descriptor ??
+        legacyFeatureHashDescriptor();
+      const key = embeddingDescriptorKey(descriptor);
+      if (!queryVectors.has(key)) {
+        queryVectors.set(
+          key,
+          await embedQueryForDescriptor(query, descriptor),
+        );
+      }
+    }
+  }
 
   return records
-    .filter((record) => statuses.size === 0 || statuses.has(record.status))
-    .map((record) => ({
-      record,
-      score: query.trim()
-        ? hybridRetrievalScore(
-            query,
-            record.searchableText,
-            record.retrieval.vector,
-            mode,
-          )
-        : { lexical: 0, vector: 0, combined: 1 },
-    }))
+    .map((record) => {
+      const descriptor: EmbeddingDescriptor =
+        record.retrieval.embedding?.descriptor ??
+        legacyFeatureHashDescriptor();
+      const key = embeddingDescriptorKey(descriptor);
+      const queryVector =
+        mode === "lexical" ? null : queryVectors.get(key) ?? null;
+      return {
+        record,
+        descriptor,
+        score: query.trim()
+          ? hybridRetrievalScore(
+              query,
+              record.searchableText,
+              queryVector,
+              record.retrieval.vector,
+              mode,
+            )
+          : { lexical: 0, vector: 0, combined: 1 },
+      };
+    })
     .filter((item) => !query.trim() || item.score.combined > 0)
     .sort(
       (a, b) =>
@@ -191,7 +228,7 @@ export async function searchGlobalEpisodes(
         b.record.terminalAt.localeCompare(a.record.terminalAt),
     )
     .slice(0, limit)
-    .map(({ record, score }) => ({
+    .map(({ record, score, descriptor }) => ({
       taskId: record.taskId,
       episodeId: record.id,
       label: record.label,
@@ -202,7 +239,7 @@ export async function searchGlobalEpisodes(
       steps: record.steps,
       eventTypes: record.eventTypes,
       score,
-      vectorizer: record.retrieval.vectorizer,
+      embedding: descriptor,
     }));
 }
 
@@ -219,13 +256,17 @@ export async function episodicIndexStatus() {
     autoIndexTerminalTasks: true,
     recordCount: records.length,
     byStatus,
-    vectorizer: {
-      id: LOCAL_VECTORIZER,
-      dimensions: LOCAL_VECTOR_DIMENSIONS,
-      neuralEmbedding: false,
-      note:
-        "v0.9.9 uses local feature hashing for zero-dependency vector retrieval; the vectorizer is replaceable by a neural embedding provider.",
-    },
+    embeddingProvider: getEmbeddingProviderStatus(),
+    storedEmbeddingProviders: [
+      ...new Set(
+        records.map((record) => {
+          const descriptor =
+            record.retrieval.embedding?.descriptor ??
+            legacyFeatureHashDescriptor();
+          return `${descriptor.providerId}:${descriptor.model}:${descriptor.dimensions}`;
+        }),
+      ),
+    ],
     storage: getEpisodicStorageInfo(),
   };
 }

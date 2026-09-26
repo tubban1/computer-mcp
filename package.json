@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,10 @@
     "verify:semantic-memory": "tsx scripts/verify-semantic-memory.ts",
     "verify:recall": "tsx scripts/verify-recall.ts",
     "verify:session-adapters": "tsx scripts/verify-session-adapters.ts",
-    "verify:identity": "tsx scripts/verify-runtime-identity.ts"
+    "verify:identity": "tsx scripts/verify-runtime-identity.ts",
+    "verify:embedding-provider": "tsx scripts/verify-embedding-provider.ts",
+    "verify:wechat-session": "tsx scripts/verify-wechat-session.ts",
+    "verify:macos-helper": "xcrun swiftc -frontend -parse macos-helper/ComputerMCPHelper.swift"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

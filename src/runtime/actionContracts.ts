@@ -184,6 +184,8 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
     "desktop.ui_find",
     "desktop.screenshot",
     "desktop.screenshot_region",
+    "desktop.screenshot_window",
+    "desktop.ocr_window",
     "desktop.clipboard_read",
     "desktop.clipboard_info",
     "desktop.clipboard_snapshot",

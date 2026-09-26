@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Vision
 import Darwin
 
 struct HelperError: Error, CustomStringConvertible {
@@ -276,6 +277,97 @@ func runScreenshot(path: String, region: CGRect?) throws {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let message = String(data: data, encoding: .utf8) ?? "screencapture failed"
         throw HelperError(message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
+func primaryWindowInfo(appName: String?) throws -> (CGWindowID, CGRect, String) {
+    guard let app = runningApp(named: appName) else {
+        throw HelperError(message: "Application not found.")
+    }
+    guard let raw = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID)
+        as? [[String: Any]]
+    else {
+        throw HelperError(message: "Could not enumerate macOS windows.")
+    }
+
+    let pid = app.processIdentifier
+    let candidates: [(CGWindowID, CGRect, String)] = raw.compactMap { info in
+        guard
+            let ownerPid = info[kCGWindowOwnerPID as String] as? NSNumber,
+            ownerPid.int32Value == pid,
+            let number = info[kCGWindowNumber as String] as? NSNumber,
+            let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+            let bounds = CGRect(dictionaryRepresentation: boundsDict)
+        else {
+            return nil
+        }
+
+        let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+        let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+        guard layer == 0, alpha > 0, bounds.width > 100, bounds.height > 100 else {
+            return nil
+        }
+        let name = info[kCGWindowName as String] as? String ?? ""
+        return (CGWindowID(number.uint32Value), bounds, name)
+    }
+
+    guard let best = candidates.max(by: {
+        ($0.1.width * $0.1.height) < ($1.1.width * $1.1.height)
+    }) else {
+        throw HelperError(message: "No capturable application window found.")
+    }
+    return best
+}
+
+func runWindowScreenshot(path: String, appName: String?) throws -> [String: Any] {
+    let (windowID, bounds, windowName) = try primaryWindowInfo(appName: appName)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    process.arguments = ["-x", "-l", String(windowID), path]
+    let pipe = Pipe()
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    if process.terminationStatus != 0 {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let message = String(data: data, encoding: .utf8) ?? "screencapture failed"
+        throw HelperError(message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    return [
+        "path": path,
+        "windowId": windowID,
+        "windowName": windowName,
+        "x": bounds.origin.x,
+        "y": bounds.origin.y,
+        "width": bounds.size.width,
+        "height": bounds.size.height
+    ]
+}
+
+func recognizeText(path: String, languages: [String]) throws -> [[String: Any]] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
+    if !languages.isEmpty {
+        request.recognitionLanguages = languages
+    }
+
+    let handler = VNImageRequestHandler(url: URL(fileURLWithPath: path), options: [:])
+    try handler.perform([request])
+
+    return (request.results ?? []).compactMap { observation in
+        guard let candidate = observation.topCandidates(1).first else {
+            return nil
+        }
+        let box = observation.boundingBox
+        return [
+            "text": candidate.string,
+            "confidence": candidate.confidence,
+            "x": box.origin.x,
+            "y": box.origin.y,
+            "width": box.size.width,
+            "height": box.size.height
+        ]
     }
 }
 
@@ -566,6 +658,25 @@ func handle(_ request: [String: Any]) throws -> Any {
         }
         try runScreenshot(path: output, region: CGRect(x: x, y: y, width: width, height: height))
         return ["path": output, "x": x, "y": y, "width": width, "height": height]
+
+    case "screenshot_window":
+        guard let output = getString(args, "path") else {
+            throw HelperError(message: "Missing path.")
+        }
+        let name = getString(args, "app_name")
+        return try runWindowScreenshot(path: output, appName: name)
+
+    case "ocr_window":
+        guard let output = getString(args, "path") else {
+            throw HelperError(message: "Missing path.")
+        }
+        let name = getString(args, "app_name")
+        let languages = args["languages"] as? [String] ?? []
+        var captured = try runWindowScreenshot(path: output, appName: name)
+        let observations = try recognizeText(path: output, languages: languages)
+        captured["observations"] = observations
+        captured["text"] = observations.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        return captured
 
     default:
         throw HelperError(message: "Unsupported action: \(action)")

@@ -95,7 +95,8 @@ try {
   assert.equal(episodicStatus.recordCount, 2);
   assert.equal(episodicStatus.byStatus.completed, 1);
   assert.equal(episodicStatus.byStatus.failed, 1);
-  assert.equal(episodicStatus.vectorizer.neuralEmbedding, false);
+  assert.equal(episodicStatus.embeddingProvider.providerId, "feature-hash");
+  assert.equal(episodicStatus.embeddingProvider.configured, true);
 
   const successSearch = await searchGlobalEpisodes(
     "deployment checkpoint recovery",
@@ -171,7 +172,8 @@ try {
         vectorRecall: true,
         episodicAndSemanticTogether: true,
         encryptedEpisodicStore: status.episodic.storage.encryptedAtRest,
-        vectorizer: status.episodic.vectorizer,
+        embeddingProvider: status.episodic.embeddingProvider,
+        storedEmbeddingProviders: status.episodic.storedEmbeddingProviders,
       },
       null,
       2,

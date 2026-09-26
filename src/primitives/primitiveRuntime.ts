@@ -78,20 +78,33 @@ const definitions: PrimitiveDefinition[] = [
   {
     id: "vision.capture",
     domain: "perception",
-    description: "Capture the whole desktop or a rectangular region.",
-    ops: ["screen", "region", "page"],
+    description:
+      "Capture the whole desktop, a rectangular region, a background application window, or a browser page.",
+    ops: ["screen", "region", "window", "page"],
     route: (op, args) => {
       const normalized = requireOp(
         op,
-        ["screen", "region", "page"],
+        ["screen", "region", "window", "page"],
         "vision.capture",
       );
       const action = {
         screen: "desktop.screenshot",
         region: "desktop.screenshot_region",
+        window: "desktop.screenshot_window",
         page: "browser.screenshot",
       }[normalized]!;
       return { action, args };
+    },
+  },
+  {
+    id: "vision.ocr",
+    domain: "perception",
+    description:
+      "Read text from a background application window through native OCR without focusing the app.",
+    ops: ["window"],
+    route: (op, args) => {
+      requireOp(op, ["window"], "vision.ocr");
+      return { action: "desktop.ocr_window", args };
     },
   },
   {

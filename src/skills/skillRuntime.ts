@@ -64,6 +64,21 @@ import {
 } from "../runtime/sessionAdapters.js";
 import type { SessionAdapterId } from "../runtime/sessionStore.js";
 import { getRuntimeIdentity } from "../runtime/runtimeIdentity.js";
+import {
+  embedTexts,
+  getEmbeddingProviderStatus,
+} from "../runtime/embeddingProvider.js";
+import {
+  bindWeChatSession,
+  captureLatestWeChatReply,
+  deletePersistentWeChatSession,
+  identifyWeChatSession,
+  listPersistentWeChatSessions,
+  probeWeChatSession,
+  resolvePendingWeChatSend,
+  sendWeChatSessionMessage,
+  weChatSessionAdapterContract,
+} from "../runtime/wechatSessionAdapter.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -180,6 +195,36 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
     executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.embedding": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "wechat.session": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [
+      "vision.ocr",
+      "app.lifecycle",
+      "keyboard.press",
+      "keyboard.type",
+      "pointer.click",
+    ],
+    executionMode: "durable",
     memoryPolicy: {
       working: "runtime",
       staging: "available_when_durable",
@@ -508,7 +553,7 @@ function parseLoopPhases(raw: unknown): LoopPhase[] {
       }
       session = {
         bindingId,
-        op: op as "identify" | "capture_latest" | "send",
+        op: op as "identify" | "probe" | "capture_latest" | "send",
         args:
           sessionRaw.args &&
           typeof sessionRaw.args === "object" &&
@@ -722,6 +767,15 @@ const IDENTITY_CONTRACT: SkillContract = {
   resources: [],
 };
 
+const EMBEDDING_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: true,
+  sideEffects: ["optional_external_embedding_request"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [],
+};
+
 const SESSION_CONTRACT: SkillContract = {
   riskLevel: "high",
   idempotent: false,
@@ -733,6 +787,22 @@ const SESSION_CONTRACT: SkillContract = {
   requiresVerification: true,
   retryPolicy: "manual",
   resources: [{ key: "browser.session", mode: "exclusive" }],
+};
+
+const WECHAT_SESSION_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: [
+    "persistent_session_binding",
+    "background_window_capture",
+    "background_ocr",
+    "temporary_window_focus",
+    "external_message",
+    "persistent_send_receipt",
+  ],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [],
 };
 
 const WECHAT_READ_CONTRACT: SkillContract = {
@@ -1401,6 +1471,173 @@ const skills: SkillDefinition[] = [
       source: "runtime_environment",
     }),
     run: async () => getRuntimeIdentity(),
+  },
+  {
+    id: "runtime.embedding",
+    domain: "runtime",
+    description:
+      "Inspect or exercise the pluggable Embedding Provider Contract used by AgentOS memory retrieval.",
+    keywords: [
+      "embedding",
+      "vector",
+      "openai embedding",
+      "ollama embedding",
+      "local embedding",
+      "向量",
+      "嵌入",
+    ],
+    contract: EMBEDDING_CONTRACT,
+    inputs: {
+      op: "status | embed. Default: status.",
+      text: "Text to embed when op=embed.",
+      include_vector:
+        "Return the full vector when true; default false returns descriptor/dimensions only.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "status",
+      provider: getEmbeddingProviderStatus(),
+      remoteDataEgressRequiresExplicitOptIn: true,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "status";
+      if (operation === "status") {
+        return getEmbeddingProviderStatus();
+      }
+      if (operation !== "embed") {
+        throw new Error('runtime.embedding op must be "status" or "embed".');
+      }
+      const text = requiredText(args, "text");
+      const result = await embedTexts([text]);
+      const vector = result.embeddings[0] ?? [];
+      return {
+        provider: result.provider,
+        fallbackUsed: result.fallbackUsed,
+        ...(result.error ? { fallbackReason: result.error } : {}),
+        dimensions: vector.length,
+        vectorNorm: Math.sqrt(
+          vector.reduce((sum, value) => sum + value * value, 0),
+        ),
+        ...(optionalBoolean(args, "include_vector", false)
+          ? { vector }
+          : {}),
+        usage: result.usage ?? null,
+      };
+    },
+  },
+  {
+    id: "wechat.session",
+    domain: "communication",
+    description:
+      "Create and operate a durable low-interruption WeChat session endpoint using background window OCR, focus restoration, and crash-safe send receipts.",
+    keywords: [
+      "wechat session",
+      "persistent wechat",
+      "low interruption",
+      "background wechat",
+      "微信持久会话",
+      "后台微信",
+      "持续聊天",
+    ],
+    contract: WECHAT_SESSION_CONTRACT,
+    inputs: {
+      op:
+        "contract | bind | identify | probe | capture_latest | send | resolve_pending | list | delete.",
+      contact_name: "Exact WeChat contact name for bind.",
+      label: "Optional human label for the persistent session.",
+      restore_focus:
+        "Restore the previously frontmost macOS app after foreground work; default true.",
+      poll_interval_ms:
+        "Suggested persistent-loop polling interval; default 30000 ms.",
+      ocr_languages:
+        "Optional Apple Vision OCR languages, e.g. [\"zh-Hans\",\"en-US\"].",
+      session_id: "Persistent WeChat session id for operations after bind.",
+      allow_focus:
+        "For capture_latest: permit a short foreground transaction if the bound contact is not currently active; default true.",
+      message: "Message text for send.",
+      confirm:
+        "Must be true for send because it creates an external WeChat message.",
+      allow_duplicate:
+        "Allow intentionally resending the exact same text despite the durable receipt.",
+      resolution:
+        "For resolve_pending: sent | not_sent after reviewing an interrupted uncertain send.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "contract",
+      contactName: args.contact_name ?? null,
+      sessionId: args.session_id ?? null,
+      backgroundProbe: "vision.ocr(window)",
+      foregroundFallback: true,
+      restorePreviousApp: args.restore_focus ?? true,
+      crashSafePendingSend: true,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "contract";
+
+      if (operation === "contract") {
+        return weChatSessionAdapterContract();
+      }
+      if (operation === "list") {
+        return await listPersistentWeChatSessions();
+      }
+      if (operation === "bind") {
+        return await bindWeChatSession({
+          contactName: requiredText(args, "contact_name"),
+          label: typeof args.label === "string" ? args.label : undefined,
+          restoreFocus: optionalBoolean(args, "restore_focus", true),
+          pollIntervalMs:
+            typeof args.poll_interval_ms === "number"
+              ? args.poll_interval_ms
+              : undefined,
+          ocrLanguages: stringArray(args.ocr_languages),
+        });
+      }
+
+      const sessionId = requiredText(args, "session_id");
+
+      if (operation === "identify") {
+        return await identifyWeChatSession(sessionId);
+      }
+      if (operation === "probe") {
+        return await probeWeChatSession(sessionId);
+      }
+      if (operation === "capture_latest") {
+        return await captureLatestWeChatReply(sessionId, {
+          allowFocus: optionalBoolean(args, "allow_focus", true),
+        });
+      }
+      if (operation === "send") {
+        return await sendWeChatSessionMessage(
+          sessionId,
+          requiredText(args, "message"),
+          {
+            confirm: optionalBoolean(args, "confirm", false),
+            allowDuplicate: optionalBoolean(args, "allow_duplicate", false),
+          },
+        );
+      }
+      if (operation === "resolve_pending") {
+        const resolution =
+          typeof args.resolution === "string"
+            ? args.resolution.trim().toLowerCase()
+            : "";
+        if (!["sent", "not_sent"].includes(resolution)) {
+          throw new Error('resolution must be "sent" or "not_sent".');
+        }
+        return await resolvePendingWeChatSend(
+          sessionId,
+          resolution as "sent" | "not_sent",
+        );
+      }
+      if (operation === "delete") {
+        return await deletePersistentWeChatSession(sessionId);
+      }
+
+      throw new Error(
+        'wechat.session op must be "contract", "bind", "identify", "probe", "capture_latest", "send", "resolve_pending", "list", or "delete".',
+      );
+    },
   },
   {
     id: "wechat.read",
@@ -2517,8 +2754,12 @@ export async function getCapabilityManifest(goal = "") {
       globalEpisodicIndex: "v0.9.9 encrypted terminal-task experience index",
       hybridRecall:
         "v0.9.9 unified episodic + semantic lexical/vector recall",
+      embeddingProviderContract:
+        "v0.9.10 provider ABI for feature-hash, OpenAI, OpenAI-compatible, and Ollama embeddings with descriptor-aware historical compatibility",
       sessionAdapters:
         "v0.9.9 ChatGPT/Antigravity browser session bindings with fingerprints and turn receipts",
+      weChatSessionAdapter:
+        "v0.9.10 persistent low-interruption WeChat endpoint with background window OCR, focus restoration, and crash-safe send receipts",
       browserSessionModel:
         "persistent browser profile + exact conversation URL + crash-safe pending-send receipt",
       dependencyGraph: "v0.7",

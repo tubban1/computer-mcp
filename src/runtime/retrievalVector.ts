@@ -42,7 +42,7 @@ function fnv1a32(value: string): number {
   return hash >>> 0;
 }
 
-export function vectorizeText(value: string): number[] {
+export function featureHashVectorize(value: string): number[] {
   const vector = new Array<number>(LOCAL_VECTOR_DIMENSIONS).fill(0);
   for (const token of wordTokens(value)) {
     const hash = fnv1a32(token);
@@ -86,11 +86,15 @@ export function lexicalScore(query: string, text: string): number {
 export function hybridRetrievalScore(
   query: string,
   text: string,
-  vector: number[],
+  queryVector: number[] | null,
+  documentVector: number[] | null,
   mode: "hybrid" | "lexical" | "vector" = "hybrid",
 ): { lexical: number; vector: number; combined: number } {
   const lexical = lexicalScore(query, text);
-  const vectorScore = Math.max(0, cosineSimilarity(vectorizeText(query), vector));
+  const vectorScore =
+    queryVector && documentVector
+      ? Math.max(0, cosineSimilarity(queryVector, documentVector))
+      : 0;
   const combined =
     mode === "lexical"
       ? lexical
@@ -103,3 +107,5 @@ export function hybridRetrievalScore(
     combined: Number(combined.toFixed(6)),
   };
 }
+
+export const vectorizeText = featureHashVectorize;

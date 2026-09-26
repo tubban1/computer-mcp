@@ -6,11 +6,17 @@ import {
   type PersistentTask,
 } from "../tasks/taskStore.js";
 import {
+  featureHashVectorize,
   hybridRetrievalScore,
-  LOCAL_VECTOR_DIMENSIONS,
-  LOCAL_VECTORIZER,
-  vectorizeText,
 } from "./retrievalVector.js";
+import {
+  embedQueryForDescriptor,
+  embedTexts,
+  embeddingDescriptorKey,
+  getEmbeddingProviderStatus,
+  legacyFeatureHashDescriptor,
+  type EmbeddingDescriptor,
+} from "./embeddingProvider.js";
 import {
   deleteSemanticMemory,
   findSemanticMemoryByDigest,
@@ -343,6 +349,14 @@ export async function promoteSemanticMemory(
   }
 
   const task = await readPersistentTask(candidate.taskId);
+  const semanticText = [
+    candidate.title,
+    candidate.content,
+    candidate.kind,
+    ...candidate.tags,
+  ].join(" ");
+  const embedding = await embedTexts([semanticText]);
+  const vector = embedding.embeddings[0]!;
   const now = new Date().toISOString();
   const record: SemanticMemoryRecord = {
     version: 1,
@@ -355,6 +369,12 @@ export async function promoteSemanticMemory(
     createdAt: now,
     updatedAt: now,
     contentDigest: candidate.contentDigest,
+    retrieval: {
+      embedding: {
+        descriptor: embedding.provider,
+        vector,
+      },
+    },
     source: {
       taskId: task.id,
       taskLabel: task.label,
@@ -392,18 +412,34 @@ export async function searchSemanticMemories(
     mode?: "hybrid" | "lexical" | "vector";
   },
 ) {
-  const records = await listSemanticMemories();
   const requiredTags = normalizeTags(options?.tags ?? []);
   const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100);
   const mode = options?.mode ?? "hybrid";
-
-  return records
+  const records = (await listSemanticMemories())
     .filter((record) => !options?.kind || record.kind === options.kind)
     .filter(
       (record) =>
         requiredTags.length === 0 ||
         requiredTags.every((tag) => record.tags.includes(tag)),
-    )
+    );
+
+  const queryVectors = new Map<string, number[] | null>();
+  if (query.trim() && mode !== "lexical") {
+    for (const record of records) {
+      const descriptor: EmbeddingDescriptor =
+        record.retrieval?.embedding.descriptor ??
+        legacyFeatureHashDescriptor();
+      const key = embeddingDescriptorKey(descriptor);
+      if (!queryVectors.has(key)) {
+        queryVectors.set(
+          key,
+          await embedQueryForDescriptor(query, descriptor),
+        );
+      }
+    }
+  }
+
+  return records
     .map((record) => {
       const searchableText = [
         record.title,
@@ -411,11 +447,25 @@ export async function searchSemanticMemories(
         record.kind,
         ...record.tags,
       ].join(" ");
-      const vector = vectorizeText(searchableText);
+      const descriptor: EmbeddingDescriptor =
+        record.retrieval?.embedding.descriptor ??
+        legacyFeatureHashDescriptor();
+      const documentVector =
+        record.retrieval?.embedding.vector ??
+        featureHashVectorize(searchableText);
+      const key = embeddingDescriptorKey(descriptor);
+      const queryVector =
+        mode === "lexical" ? null : queryVectors.get(key) ?? null;
       const score = query.trim()
-        ? hybridRetrievalScore(query, searchableText, vector, mode)
+        ? hybridRetrievalScore(
+            query,
+            searchableText,
+            queryVector,
+            documentVector,
+            mode,
+          )
         : { lexical: 0, vector: 0, combined: 1 };
-      return { record, score };
+      return { record, score, descriptor };
     })
     .filter((item) => !query.trim() || item.score.combined > 0)
     .sort(
@@ -424,15 +474,11 @@ export async function searchSemanticMemories(
         b.record.updatedAt.localeCompare(a.record.updatedAt),
     )
     .slice(0, limit)
-    .map(({ record, score }) => ({
+    .map(({ record, score, descriptor }) => ({
       ...record,
       relevanceScore: score.combined,
       retrievalScore: score,
-      vectorizer: {
-        id: LOCAL_VECTORIZER,
-        dimensions: LOCAL_VECTOR_DIMENSIONS,
-        neuralEmbedding: false,
-      },
+      embedding: descriptor,
     }));
 }
 
@@ -460,11 +506,17 @@ export async function semanticMemoryStatus() {
     storage: getSemanticStorageInfo(),
     retrieval: {
       modes: ["hybrid", "lexical", "vector"],
-      vectorizer: {
-        id: LOCAL_VECTORIZER,
-        dimensions: LOCAL_VECTOR_DIMENSIONS,
-        neuralEmbedding: false,
-      },
+      embeddingProvider: getEmbeddingProviderStatus(),
+      storedEmbeddingProviders: [
+        ...new Set(
+          records.map((record) => {
+            const descriptor =
+              record.retrieval?.embedding.descriptor ??
+              legacyFeatureHashDescriptor();
+            return `${descriptor.providerId}:${descriptor.model}:${descriptor.dimensions}`;
+          }),
+        ),
+      ],
     },
     kinds: [...KINDS],
     sensitivities: [...SENSITIVITIES],

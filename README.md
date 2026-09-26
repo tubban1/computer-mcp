@@ -925,7 +925,7 @@ runtime.session
 runtime.identity
 ```
 
-Global M2 Episodic Memory now indexes terminal completed/failed/blocked/cancelled tasks in an encrypted store. `runtime.recall` searches M2 episodes and M3 semantic memory together with lexical, local-vector, or hybrid ranking. The local `feature-hash-v1` vectorizer is deterministic and zero-dependency; it is not a neural embedding model and can be replaced later without changing the recall contract.
+Global M2 Episodic Memory indexes terminal completed/failed/blocked/cancelled tasks in an encrypted store. `runtime.recall` searches M2 episodes and M3 semantic memory together with lexical, vector, or hybrid ranking. v0.9.10 moves vector generation behind the Embedding Provider Contract; `feature-hash-v1` remains the local zero-dependency default/fallback, while Ollama, OpenAI-compatible endpoints, and explicitly opted-in OpenAI embeddings can be selected without changing the recall contract.
 
 Session Adapter Contract adds durable ChatGPT, Antigravity, and generic-browser bindings with exact conversation fingerprints, last-assistant-message capture, turn receipts, duplicate-send protection, and crash-safe `pendingSend` handling.
 
@@ -949,3 +949,39 @@ Architecture:
 - [Session Adapter Contract](docs/SESSION_ADAPTERS.md)
 - [Runtime Identity](docs/RUNTIME_IDENTITY.md)
 - [Persistent Loop Controller](docs/LOOP_CONTROLLER.md)
+
+
+## v0.9.10 — Embedding Provider ABI & Persistent WeChat Sessions
+
+v0.9.10 removes vector generation from the recall implementation and makes it a formal provider boundary.
+
+New L2 surface:
+
+```text
+runtime.embedding
+```
+
+Provider Contract v1 supports the local deterministic `feature-hash` provider, local Ollama, OpenAI-compatible embedding endpoints, and OpenAI embeddings. Every persisted vector carries a provider/model/dimension/config descriptor so historical vectors remain queryable after changing providers. OpenAI memory-text egress requires explicit `EMBEDDING_ALLOW_REMOTE=true`; an API key alone does not authorize remote embedding.
+
+New durable communication surface:
+
+```text
+wechat.session
+```
+
+A WeChat session binds an exact contact and supports background `probe`, `capture_latest`, crash-safe `send`, pending-send resolution, list, and delete. Low-interruption probes use native CGWindow capture plus Apple Vision OCR and do not activate WeChat. Foreground work is limited to cases where the bound chat must be selected or a message must be sent, after which the previous frontmost application is restored.
+
+`runtime.loop` now routes both browser-agent and WeChat session IDs through the same Session Endpoint contract, including the non-consuming `probe` operation.
+
+Verification:
+
+```bash
+npm run verify:embedding-provider
+npm run verify:wechat-session
+npm run verify:macos-helper
+```
+
+Architecture:
+
+- [Embedding Provider Contract](docs/EMBEDDING_PROVIDER.md)
+- [Persistent WeChat Session Adapter](docs/WECHAT_SESSION_ADAPTER.md)

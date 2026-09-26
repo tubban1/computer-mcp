@@ -8,6 +8,7 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
+import type { StoredEmbedding } from "./embeddingProvider.js";
 
 export type SemanticMemoryKind =
   | "fact"
@@ -39,6 +40,9 @@ export type SemanticMemoryRecord = {
   createdAt: string;
   updatedAt: string;
   contentDigest: string;
+  retrieval?: {
+    embedding: StoredEmbedding;
+  };
   source: {
     taskId: string;
     taskLabel: string;

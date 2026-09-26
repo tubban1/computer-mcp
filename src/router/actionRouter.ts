@@ -531,6 +531,29 @@ const actions = {
     schema: z.object({ path: z.string() }),
     run: ({ path }: any) => desktopProvider.screenshot(path),
   },
+  "desktop.screenshot_window": {
+    provider: "desktop",
+    description:
+      "Capture a specific application's main macOS window without bringing it to the foreground. Requires Computer MCP Helper.",
+    schema: z.object({
+      path: z.string(),
+      app_name: z.string().min(1).optional(),
+    }),
+    run: ({ path, app_name }: any) =>
+      desktopProvider.screenshotWindow(path, app_name),
+  },
+  "desktop.ocr_window": {
+    provider: "desktop",
+    description:
+      "Capture and OCR a specific application's main macOS window without bringing it to the foreground. Requires Computer MCP Helper.",
+    schema: z.object({
+      path: z.string(),
+      app_name: z.string().min(1).optional(),
+      languages: z.array(z.string().min(2)).max(8).optional(),
+    }),
+    run: ({ path, app_name, languages }: any) =>
+      desktopProvider.ocrWindow(path, app_name, languages ?? []),
+  },
   "desktop.window_bounds": {
     provider: "desktop",
     description: "Read the front window bounds for an application.",

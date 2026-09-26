@@ -301,7 +301,7 @@ v0.9.9 adds three Runtime surfaces without adding new top-level MCP tools:
 
 Terminal Persistent Tasks are automatically indexed into encrypted global M2 memory, including failed/blocked/cancelled tasks so failure experience remains recallable without being promoted as semantic truth.
 
-Recall supports lexical, local-vector and hybrid modes. The current 256-dimensional `feature-hash-v1` vectorizer is deterministic and zero-dependency, not a neural embedding model.
+Recall supports lexical, vector and hybrid modes. v0.9.10 routes vector generation through the Embedding Provider Contract; `feature-hash-v1` remains the local zero-dependency default/fallback, with Ollama, OpenAI-compatible, and explicitly opted-in OpenAI providers available.
 
 Session adapters bind exact conversation URLs/fingerprints, capture the last assistant message, persist turn receipts, and freeze automatic replay if a send is interrupted in an uncertain state.
 
@@ -310,3 +310,14 @@ Persistent Loop phases can now execute either Primitive graphs or Session Adapte
 The managed browser uses a stable Runtime-owned profile across restarts. `web.session` is the canonical tab/session Primitive family with `tabs`, `use_tab`, `new_tab`, and `close`.
 
 The formal name remains AgentOS Runtime. A configurable wake name such as `Jarvis` is exposed through MCP metadata and capabilities for chats where computer-mcp is connected.
+
+
+### v0.9.10 — Embedding Provider ABI & Persistent WeChat Sessions
+
+Vector generation is now a provider contract rather than a hard-coded retrieval implementation. M2 and M3 vectors persist their provider/model/dimension/config descriptor; query-time vector generation follows the descriptor of each stored vector. Supported provider families are local feature-hash, Ollama, OpenAI-compatible endpoints and explicitly opted-in OpenAI embeddings.
+
+The Runtime also adds a durable WeChat Session Endpoint. Background CGWindow capture plus Apple Vision OCR supports non-consuming low-interruption probes without activating WeChat. Foreground contact selection/send runs inside a focus transaction that records the previous frontmost application and restores it afterward.
+
+Browser-agent and WeChat bindings now share the Session Endpoint abstraction used by Persistent Loop. Session phases support `identify`, `probe`, `capture_latest` and `send`.
+
+See `docs/EMBEDDING_PROVIDER.md` and `docs/WECHAT_SESSION_ADAPTER.md`.

@@ -19,6 +19,7 @@ xcrun swiftc \
   -framework AppKit \
   -framework ApplicationServices \
   -framework CoreGraphics \
+  -framework Vision \
   "$SRC" \
   -o "$APP/Contents/MacOS/ComputerMCPHelper"
 

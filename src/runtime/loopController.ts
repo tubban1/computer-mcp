@@ -7,10 +7,11 @@ import {
   type PrimitiveTaskStep,
 } from "../tasks/taskRuntime.js";
 import {
-  captureLatestAgentReply,
-  identifyBrowserAgentSession,
-  sendAgentMessage,
-} from "./sessionAdapters.js";
+  captureLatestSessionEndpoint,
+  identifySessionEndpoint,
+  probeSessionEndpoint,
+  sendSessionEndpoint,
+} from "./sessionEndpoint.js";
 import {
   deleteLoopRecord,
   getLoopStorageInfo,
@@ -171,16 +172,15 @@ async function executeSessionPhase(
   ) as Record<string, unknown>;
 
   if (phase.session.op === "identify") {
-    return await identifyBrowserAgentSession(bindingId);
+    return await identifySessionEndpoint(bindingId);
+  }
+
+  if (phase.session.op === "probe") {
+    return await probeSessionEndpoint(bindingId);
   }
 
   if (phase.session.op === "capture_latest") {
-    return await captureLatestAgentReply(bindingId, {
-      maxChars:
-        typeof args.max_chars === "number"
-          ? args.max_chars
-          : undefined,
-    });
+    return await captureLatestSessionEndpoint(bindingId, args);
   }
 
   if (phase.session.op === "send") {
@@ -191,11 +191,7 @@ async function executeSessionPhase(
         `Session loop phase "${phase.id}" send requires args.text.`,
       );
     }
-    return await sendAgentMessage(bindingId, text, {
-      confirm: args.confirm === true,
-      allowDuplicate: args.allow_duplicate === true,
-      deduplicateAsSuccess: true,
-    });
+    return await sendSessionEndpoint(bindingId, text, args);
   }
 
   throw new Error(
@@ -269,7 +265,7 @@ export async function createPersistentLoop(input: CreateLoopInput) {
           `Loop phase "${phase.id}" session.bindingId is required.`,
         );
       }
-      if (!["identify", "capture_latest", "send"].includes(phase.session.op)) {
+      if (!["identify", "probe", "capture_latest", "send"].includes(phase.session.op)) {
         throw new Error(
           `Loop phase "${phase.id}" has unsupported session op "${phase.session.op}".`,
         );

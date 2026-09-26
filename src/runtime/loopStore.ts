@@ -18,7 +18,7 @@ export type LoopAdvanceWhen = {
 
 export type LoopSessionAction = {
   bindingId: string;
-  op: "identify" | "capture_latest" | "send";
+  op: "identify" | "probe" | "capture_latest" | "send";
   args?: Record<string, unknown>;
 };
 

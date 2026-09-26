@@ -9,6 +9,7 @@ import {
   randomUUID,
 } from "node:crypto";
 import type { PersistentTaskStatus } from "../tasks/taskStore.js";
+import type { StoredEmbedding } from "./embeddingProvider.js";
 
 export type EpisodicStepSummary = {
   id: string;
@@ -39,8 +40,9 @@ export type GlobalEpisodeRecord = {
   searchableText: string;
   contentDigest: string;
   retrieval: {
-    vectorizer: "feature-hash-v1";
-    dimensions: 256;
+    embedding?: StoredEmbedding;
+    vectorizer?: "feature-hash-v1";
+    dimensions: number;
     vector: number[];
   };
 };

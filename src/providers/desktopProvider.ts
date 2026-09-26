@@ -1028,6 +1028,53 @@ class DesktopProvider implements ComputerProvider {
     );
   }
 
+  async screenshotWindow(outputPath: string, appName?: string) {
+    requireDesktopEnabled();
+    const safePath = await assertAllowedTargetPath(outputPath);
+    await fs.mkdir(path.dirname(safePath), { recursive: true });
+
+    if (helperMode() === "disabled" || !(await helperInstalled())) {
+      throw new Error(
+        "Background window capture requires Computer MCP Helper. Install/update it with scripts/install-macos-helper.sh.",
+      );
+    }
+
+    return await helperRequest(
+      "screenshot_window",
+      {
+        path: safePath,
+        ...(appName?.trim() ? { app_name: appName.trim() } : {}),
+      },
+      { timeoutMs: 30_000 },
+    );
+  }
+
+  async ocrWindow(
+    outputPath: string,
+    appName?: string,
+    languages: string[] = [],
+  ) {
+    requireDesktopEnabled();
+    const safePath = await assertAllowedTargetPath(outputPath);
+    await fs.mkdir(path.dirname(safePath), { recursive: true });
+
+    if (helperMode() === "disabled" || !(await helperInstalled())) {
+      throw new Error(
+        "Background window OCR requires Computer MCP Helper. Install/update it with scripts/install-macos-helper.sh.",
+      );
+    }
+
+    return await helperRequest(
+      "ocr_window",
+      {
+        path: safePath,
+        ...(appName?.trim() ? { app_name: appName.trim() } : {}),
+        languages: languages.slice(0, 8),
+      },
+      { timeoutMs: 45_000 },
+    );
+  }
+
   async screenshotRegion(
     outputPath: string,
     x: number,

@@ -1,6 +1,6 @@
 # AgentOS Runtime Global Episodic Recall
 
-Status: **v0.9.9 foundation**
+Status: **v0.9.10 foundation**
 
 v0.9.9 adds a global encrypted M2 index across terminal Persistent Tasks and a unified recall path across M2 Episodic and M3 Semantic Memory.
 
@@ -54,9 +54,9 @@ This lets the Planner ask both “what happened in similar tasks?” and “what
 
 ## Local vector retrieval
 
-v0.9.9 uses `feature-hash-v1`, a deterministic local 256-dimensional feature-hash vectorizer with word tokens plus character trigrams. It has zero cloud dependency and works with CJK text.
+v0.9.10 routes vector generation through the Embedding Provider Contract. `feature-hash-v1` remains the deterministic local 256-dimensional default/fallback, while Ollama, OpenAI-compatible endpoints, and OpenAI can provide neural embeddings. Every stored vector keeps a provider/model/dimension/config descriptor, so historical records are queried with a compatible provider rather than blindly reusing the current configuration.
 
-It is **not** a neural embedding model. The retrieval contract deliberately separates vector generation from storage/search so a future local or hosted neural embedding provider can replace it without changing the L1 Primitive ISA, M2 record provenance, or `runtime.recall` API.
+OpenAI memory-text egress requires explicit `EMBEDDING_ALLOW_REMOTE=true`; merely configuring an API key does not authorize remote embedding.
 
 Hybrid ranking currently combines lexical and vector scores.
 

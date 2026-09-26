@@ -1,6 +1,6 @@
 # AgentOS Runtime Semantic Memory
 
-Status: **v0.9.9 foundation**
+Status: **v0.9.10 foundation**
 
 v0.9.8 closes the first executable M2 Episodic → M3 Semantic promotion path.
 
@@ -95,7 +95,7 @@ Equivalent content is deduplicated by normalized SHA-256 digest.
 
 The same L2 Skill supports status, search, list, get, and delete. v0.9.9 adds `lexical`, local `vector`, and `hybrid` retrieval modes over title, content, kind, and tags.
 
-The current vectorizer is deterministic `feature-hash-v1`, not a neural embedding model. A future local or hosted neural embedding provider can replace it without changing the L1 ISA or the promotion provenance contract.
+v0.9.10 stores provider-described embeddings with each promoted semantic record. `feature-hash-v1` remains the local default/fallback; Ollama, OpenAI-compatible endpoints, and explicitly enabled OpenAI embeddings can be used without changing the L1 ISA or promotion provenance contract.
 
 ## Verification
 
