@@ -657,6 +657,24 @@ export async function runPersistentTask(
         latest.cancelRequested ||
         (controlSignals.get(id)?.cancelRequested ?? false);
 
+      const existingEventKeys = new Set(
+        task.events.map(
+          (event) =>
+            `${event.at}|${event.type}|${event.stepId ?? ""}|${event.message}`,
+        ),
+      );
+      for (const event of latest.events) {
+        const key = `${event.at}|${event.type}|${event.stepId ?? ""}|${event.message}`;
+        if (!existingEventKeys.has(key)) {
+          task.events.push(event);
+          existingEventKeys.add(key);
+        }
+      }
+      task.events.sort((a, b) => a.at.localeCompare(b.at));
+      if (task.events.length > 1000) {
+        task.events.splice(0, task.events.length - 1000);
+      }
+
       for (const result of results) {
         const step = task.steps.find((item) => item.id === result.id)!;
         step.durationMs = result.durationMs;
