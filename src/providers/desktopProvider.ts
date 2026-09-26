@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import net from "node:net";
 import { envFlag } from "../security/capabilities.js";
 import { assertAllowedTargetPath } from "../security/pathGuard.js";
 import type { ComputerProvider, ProviderStatus } from "./types.js";
@@ -27,6 +28,46 @@ function requireDesktopEnabled(): void {
   }
   if (process.platform !== "darwin") {
     throw new Error("Desktop provider currently supports macOS only.");
+  }
+}
+
+function helperAppPath(): string {
+  return (
+    process.env.COMPUTER_MCP_HELPER_APP?.trim() ||
+    path.join(os.homedir(), "Applications", "Computer MCP Helper.app")
+  );
+}
+
+function helperSocketPath(): string {
+  return (
+    process.env.COMPUTER_MCP_HELPER_SOCKET?.trim() ||
+    path.join(os.homedir(), ".computer-mcp", "helper.sock")
+  );
+}
+
+function helperMode(): "auto" | "required" | "disabled" {
+  const value = (process.env.MACOS_HELPER_MODE ?? "auto").trim().toLowerCase();
+  if (value === "required" || value === "disabled") return value;
+  return "auto";
+}
+
+async function helperInstalled(): Promise<boolean> {
+  try {
+    await fs.access(
+      path.join(helperAppPath(), "Contents", "MacOS", "ComputerMCPHelper"),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function socketExists(): Promise<boolean> {
+  try {
+    const stat = await fs.stat(helperSocketPath());
+    return stat.isSocket();
+  } catch {
+    return false;
   }
 }
 
@@ -70,6 +111,164 @@ async function runWithInput(command: string, args: string[], input: string) {
     );
     child.stdin.end(input);
   });
+}
+
+async function launchHelper(): Promise<void> {
+  if (!(await helperInstalled())) {
+    throw new Error(
+      `Computer MCP Helper is not installed at ${helperAppPath()}. Run scripts/install-macos-helper.sh.`,
+    );
+  }
+
+  await fs.mkdir(path.dirname(helperSocketPath()), {
+    recursive: true,
+    mode: 0o700,
+  });
+
+  const result = await run("/usr/bin/open", [
+    "-gj",
+    helperAppPath(),
+    "--args",
+    "--serve",
+  ]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      result.stderr.trim() || "Could not launch Computer MCP Helper.",
+    );
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    if (await socketExists()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Computer MCP Helper did not create its Unix socket.");
+}
+
+async function sendHelperRequestOnce(
+  action: string,
+  args: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<any> {
+  const socketPath = helperSocketPath();
+
+  return await new Promise<any>((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
+    let buffer = "";
+    let settled = false;
+
+    const finishError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+
+    const timer = setTimeout(() => {
+      finishError(
+        new Error(`Computer MCP Helper timed out during ${action}.`),
+      );
+    }, timeoutMs);
+
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      socket.write(JSON.stringify({ action, args }) + "\n");
+    });
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      socket.end();
+
+      try {
+        const payload = JSON.parse(buffer.slice(0, newline));
+        if (!payload?.ok) {
+          reject(
+            new Error(
+              payload?.error ||
+                `Computer MCP Helper failed during ${action}.`,
+            ),
+          );
+          return;
+        }
+        resolve(payload.result);
+      } catch (error) {
+        reject(
+          error instanceof Error
+            ? error
+            : new Error("Could not parse Computer MCP Helper response."),
+        );
+      }
+    });
+    socket.on("error", (error) => {
+      clearTimeout(timer);
+      finishError(error);
+    });
+  });
+}
+
+async function helperRequest(
+  action: string,
+  args: Record<string, unknown> = {},
+  options?: { autoLaunch?: boolean; timeoutMs?: number },
+): Promise<any> {
+  requireDesktopEnabled();
+  if (helperMode() === "disabled") {
+    throw new Error("Computer MCP Helper is disabled by MACOS_HELPER_MODE.");
+  }
+
+  const autoLaunch = options?.autoLaunch !== false;
+  const timeoutMs = options?.timeoutMs ?? 15_000;
+
+  if (!(await socketExists())) {
+    if (!autoLaunch) {
+      throw new Error("Computer MCP Helper is not running.");
+    }
+    await launchHelper();
+  }
+
+  try {
+    return await sendHelperRequestOnce(action, args, timeoutMs);
+  } catch (error) {
+    if (!autoLaunch) throw error;
+
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as NodeJS.ErrnoException).code ?? "")
+        : "";
+    const message = error instanceof Error ? error.message : String(error);
+    const transportFailure =
+      ["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE"].includes(code) ||
+      message.includes("timed out during");
+
+    if (!transportFailure) throw error;
+
+    // A crashed helper can leave a stale Unix socket behind.
+    await fs.rm(helperSocketPath(), { force: true }).catch(() => undefined);
+    await launchHelper();
+    return await sendHelperRequestOnce(action, args, timeoutMs);
+  }
+}
+
+async function helperOrFallback<T>(
+  action: string,
+  args: Record<string, unknown>,
+  fallback: () => Promise<T>,
+  timeoutMs?: number,
+): Promise<T> {
+  const mode = helperMode();
+  if (mode !== "disabled" && (await helperInstalled())) {
+    try {
+      return (await helperRequest(action, args, { timeoutMs })) as T;
+    } catch (error) {
+      if (mode === "required") throw error;
+    }
+  }
+  return await fallback();
 }
 
 async function jxa(script: string) {
@@ -149,6 +348,23 @@ class DesktopProvider implements ComputerProvider {
   readonly label = "Desktop";
 
   async status(): Promise<ProviderStatus> {
+    const installed =
+      process.platform === "darwin" && (await helperInstalled());
+    let helper: unknown = null;
+
+    if (installed && (await socketExists())) {
+      try {
+        helper = await helperRequest("status", {}, {
+          autoLaunch: false,
+          timeoutMs: 3000,
+        });
+      } catch (error) {
+        helper = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
     return {
       id: this.id,
       label: this.label,
@@ -161,32 +377,73 @@ class DesktopProvider implements ComputerProvider {
         "region-screenshot",
         "clipboard",
         "clipboard-transaction",
+        "native-helper",
       ],
       details: {
         platform: process.platform,
+        helperMode: helperMode(),
+        helperInstalled: installed,
+        helperAppPath: helperAppPath(),
+        helperSocketPath: helperSocketPath(),
+        helper,
         note:
-          "Keyboard/click/UI-tree actions require macOS Accessibility permission. Screenshots require Screen Recording permission.",
+          "v0.9.2 prefers the standalone Computer MCP Helper.app, so Accessibility and Screen Recording permissions belong to the helper rather than the IDE/Terminal that launched computer-mcp.",
       },
     };
   }
 
+  async helperStatus() {
+    requireDesktopEnabled();
+    return await helperRequest("status", {}, { timeoutMs: 3000 });
+  }
+
+  async helperRequestPermissions() {
+    requireDesktopEnabled();
+    return await helperRequest(
+      "request_permissions",
+      {},
+      { timeoutMs: 60_000 },
+    );
+  }
+
   async frontmostApp() {
     requireDesktopEnabled();
-    const name = await osascript(
-      'tell application "System Events" to get name of first application process whose frontmost is true',
+    return await helperOrFallback(
+      "frontmost_app",
+      {},
+      async () => {
+        const name = await osascript(
+          'tell application "System Events" to get name of first application process whose frontmost is true',
+        );
+        return { app: name };
+      },
     );
-    return { app: name };
   }
 
   async openApp(appName: string) {
     requireDesktopEnabled();
-    const safe = appleScriptEscape(appName);
-    await osascript(`tell application "${safe}" to activate`);
-    return { app: appName, activated: true };
+    return await helperOrFallback(
+      "open_app",
+      { app_name: appName },
+      async () => {
+        const safe = appleScriptEscape(appName);
+        await osascript(`tell application "${safe}" to activate`);
+        return { app: appName, activated: true };
+      },
+    );
   }
 
   async windowBounds(appName?: string) {
     requireDesktopEnabled();
+    if (helperMode() !== "disabled" && (await helperInstalled())) {
+      try {
+        return await helperRequest("window_bounds", {
+          app_name: appName,
+        });
+      } catch (error) {
+        if (helperMode() === "required") throw error;
+      }
+    }
     const target =
       appName?.trim() || (await this.frontmostApp()).app;
     const safe = appleScriptEscape(target);
@@ -220,6 +477,21 @@ class DesktopProvider implements ComputerProvider {
     truncated: boolean;
   }> {
     requireDesktopEnabled();
+    if (helperMode() !== "disabled" && (await helperInstalled())) {
+      try {
+        return await helperRequest(
+          "ui_tree",
+          {
+            app_name: appName,
+            max_elements: maxElements,
+            max_depth: 16,
+          },
+          { timeoutMs: 30_000 },
+        );
+      } catch (error) {
+        if (helperMode() === "required") throw error;
+      }
+    }
     const target =
       appName?.trim() || (await this.frontmostApp()).app;
     const safe = appleScriptEscape(target);
@@ -308,6 +580,22 @@ class DesktopProvider implements ComputerProvider {
     maxElements = 500,
   ) {
     requireDesktopEnabled();
+    if (helperMode() !== "disabled" && (await helperInstalled())) {
+      try {
+        return await helperRequest(
+          "ui_find",
+          {
+            query,
+            app_name: appName,
+            max_results: maxResults,
+            max_elements: maxElements,
+          },
+          { timeoutMs: 30_000 },
+        );
+      } catch (error) {
+        if (helperMode() === "required") throw error;
+      }
+    }
     const normalized = query.trim().toLowerCase();
     if (!normalized) throw new Error("UI query cannot be empty.");
 
@@ -358,10 +646,16 @@ class DesktopProvider implements ComputerProvider {
 
   async click(x: number, y: number) {
     requireDesktopEnabled();
-    await osascript(
-      `tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}`,
+    return await helperOrFallback(
+      "click",
+      { x: Math.round(x), y: Math.round(y) },
+      async () => {
+        await osascript(
+          `tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}`,
+        );
+        return { x: Math.round(x), y: Math.round(y), clicked: true };
+      },
     );
-    return { x: Math.round(x), y: Math.round(y), clicked: true };
   }
 
   async clipboardInfo() {
@@ -583,9 +877,7 @@ class DesktopProvider implements ComputerProvider {
       };
     }
 
-    await osascript(
-      'tell application "System Events" to keystroke "c" using {command down}',
-    );
+    await this.key("c", ["command"]);
     const changed = await this.clipboardWaitChange(
       snapshot.changeCount,
       timeoutMs,
@@ -620,9 +912,7 @@ class DesktopProvider implements ComputerProvider {
 
     await this.clipboardWrite(text);
     try {
-      await osascript(
-        'tell application "System Events" to keystroke "v" using {command down}',
-      );
+      await this.key("v", ["command"]);
     } finally {
       if (snapshot) await this.clipboardRestore(snapshot.token!);
     }
@@ -638,6 +928,13 @@ class DesktopProvider implements ComputerProvider {
     modifiers: Array<"command" | "option" | "control" | "shift"> = [],
   ) {
     requireDesktopEnabled();
+    if (helperMode() !== "disabled" && (await helperInstalled())) {
+      try {
+        return await helperRequest("key", { key, modifiers });
+      } catch (error) {
+        if (helperMode() === "required") throw error;
+      }
+    }
 
     const keyCodes: Record<string, number> = {
       enter: 36,
@@ -686,11 +983,18 @@ class DesktopProvider implements ComputerProvider {
     requireDesktopEnabled();
     const safePath = await assertAllowedTargetPath(outputPath);
     await fs.mkdir(path.dirname(safePath), { recursive: true });
-    const result = await run("/usr/sbin/screencapture", ["-x", safePath]);
-    if (result.exitCode !== 0) {
-      throw new Error(result.stderr.trim() || "screencapture failed.");
-    }
-    return { path: safePath };
+    return await helperOrFallback(
+      "screenshot",
+      { path: safePath },
+      async () => {
+        const result = await run("/usr/sbin/screencapture", ["-x", safePath]);
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr.trim() || "screencapture failed.");
+        }
+        return { path: safePath };
+      },
+      30_000,
+    );
   }
 
   async screenshotRegion(
@@ -708,6 +1012,23 @@ class DesktopProvider implements ComputerProvider {
 
     const safePath = await assertAllowedTargetPath(outputPath);
     await fs.mkdir(path.dirname(safePath), { recursive: true });
+    if (helperMode() !== "disabled" && (await helperInstalled())) {
+      try {
+        return await helperRequest(
+          "screenshot_region",
+          {
+            path: safePath,
+            x: values[0],
+            y: values[1],
+            width: values[2],
+            height: values[3],
+          },
+          { timeoutMs: 30_000 },
+        );
+      } catch (error) {
+        if (helperMode() === "required") throw error;
+      }
+    }
     const region = values.join(",");
     const result = await run("/usr/sbin/screencapture", [
       "-x",

@@ -470,6 +470,19 @@ const actions = {
     schema: z.object({ app_name: z.string().min(1) }),
     run: ({ app_name }: any) => desktopProvider.openApp(app_name),
   },
+  "desktop.helper_status": {
+    provider: "desktop",
+    description: "Read the standalone Computer MCP Helper.app runtime and permission status.",
+    schema: noArgs,
+    run: () => desktopProvider.helperStatus(),
+  },
+  "desktop.helper_request_permissions": {
+    provider: "desktop",
+    description: "Ask macOS to grant Accessibility and Screen Recording permissions to Computer MCP Helper.app.",
+    schema: noArgs,
+    destructive: true,
+    run: () => desktopProvider.helperRequestPermissions(),
+  },
   "desktop.click": {
     provider: "desktop",
     description: "Click an absolute macOS screen coordinate.",

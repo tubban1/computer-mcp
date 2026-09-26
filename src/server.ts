@@ -139,7 +139,7 @@ function fail(error: unknown) {
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.1",
+    version: "0.9.2",
   });
 
   server.tool(
@@ -804,7 +804,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.1",
+          version: "0.9.2",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -818,6 +818,7 @@ function createServer() {
           skillRuntime: true,
           resourceArbiter: true,
           desktopPerception: envFlag("ALLOW_GUI", false),
+          nativeMacHelper: true,
           browserUpload: envFlag("ALLOW_BROWSER", false),
           auditLogEnabled: envFlag("AUDIT_LOG_ENABLED", true),
           auditLogPath: getAuditLogPath(),
@@ -1887,7 +1888,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.1",
+    version: "0.9.2",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1901,6 +1902,7 @@ app.get("/health", (_req, res) => {
       skillRuntime: true,
       resourceArbiter: true,
       desktopPerception: envFlag("ALLOW_GUI", false),
+      nativeMacHelper: true,
       browserUpload: envFlag("ALLOW_BROWSER", false),
       auditLog: envFlag("AUDIT_LOG_ENABLED", true),
     },
@@ -1909,5 +1911,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.9.1 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.2 listening on http://127.0.0.1:${port}/mcp`);
 });

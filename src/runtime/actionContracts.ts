@@ -188,6 +188,7 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
     "desktop.clipboard_info",
     "desktop.clipboard_snapshot",
     "desktop.clipboard_wait_change",
+    "desktop.helper_status",
   ].includes(action)) {
     return {
       ...SAFE_READ,
@@ -196,6 +197,17 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
         : action.startsWith("desktop.clipboard")
           ? [resource("desktop.clipboard", "shared")]
           : [],
+    };
+  }
+  if (action === "desktop.helper_request_permissions") {
+    return {
+      riskLevel: "medium",
+      idempotent: true,
+      sideEffects: ["permission_prompt"],
+      retryPolicy: "automatic",
+      requiresVerification: false,
+      parallelSafe: false,
+      resources: [resource("desktop.permissions", "exclusive")],
     };
   }
   if (action === "desktop.open_app") {

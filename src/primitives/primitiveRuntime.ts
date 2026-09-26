@@ -152,18 +152,20 @@ const definitions: PrimitiveDefinition[] = [
   {
     id: "app.lifecycle",
     domain: "app",
-    description: "Activate an app or inspect the active app/window.",
-    ops: ["launch", "frontmost", "bounds"],
+    description: "Activate an app, inspect the active app/window, or manage the native macOS helper permissions.",
+    ops: ["launch", "frontmost", "bounds", "helper_status", "request_permissions"],
     route: (op, args) => {
       const normalized = requireOp(
         op,
-        ["launch", "frontmost", "bounds"],
+        ["launch", "frontmost", "bounds", "helper_status", "request_permissions"],
         "app.lifecycle",
       );
       const action = {
         launch: "desktop.open_app",
         frontmost: "desktop.frontmost_app",
         bounds: "desktop.window_bounds",
+        helper_status: "desktop.helper_status",
+        request_permissions: "desktop.helper_request_permissions",
       }[normalized]!;
       return { action, args };
     },

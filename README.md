@@ -549,7 +549,7 @@ A successful v0.9 tunnel probe should report:
 
 ```text
 server_name=computer-mcp
-server_version=0.9.1
+server_version=0.9.2
 ```
 
 ## Current boundaries
@@ -589,10 +589,61 @@ The stable `clipboard` Primitive now supports:
 - `wait_change`
 - `copy_selection`
 
-Clipboard snapshots are short-lived in-memory tokens. v0.9.1 captures every pasteboard item/type as binary data and restores it with full fidelity up to a 16 MiB safety cap, including rich text, URLs, images, and application-specific clipboard flavors. If a clipboard exceeds the cap, automatic copy/paste mutation refuses to overwrite it.
+Clipboard snapshots are short-lived in-memory tokens. v0.9.2 captures every pasteboard item/type as binary data and restores it with full fidelity up to a 16 MiB safety cap, including rich text, URLs, images, and application-specific clipboard flavors. If a clipboard exceeds the cap, automatic copy/paste mutation refuses to overwrite it.
 
 `desktop.type` now snapshots and restores the full macOS pasteboard by default.
 
 `wechat.read` uses a clipboard-first fast path: it focuses WeChat, attempts to capture the current selected text via Cmd+C, restores the previous clipboard, and then falls back to Accessibility and optional screenshot perception when no text is copied.
 
 A dedicated `wechat.copy_selected` Skill provides the fastest path when text/messages are already selected in WeChat.
+
+## v0.9.2 — Native macOS Helper
+
+v0.9.2 packages desktop control into a standalone macOS app:
+
+```text
+~/Applications/Computer MCP Helper.app
+```
+
+The helper has a stable bundle identifier:
+
+```text
+fan.fde.computermcp.helper
+```
+
+It is launched by macOS LaunchServices and runs independently of the IDE or Terminal that started computer-mcp. computer-mcp talks to it through a private Unix-domain socket:
+
+```text
+~/.computer-mcp/helper.sock
+```
+
+The socket is created with mode `600`; the parent directory is mode `700`.
+
+This means Accessibility and Screen Recording permissions can be granted once to **Computer MCP Helper**, instead of separately to Antigravity, Terminal, Cursor, launchd, or other launchers.
+
+Build/install the helper with:
+
+```bash
+./scripts/install-macos-helper.sh
+```
+
+The Desktop Provider defaults to:
+
+```env
+MACOS_HELPER_MODE=auto
+```
+
+Modes:
+
+- `auto` — prefer the helper, fall back to the previous in-process AppleScript path if unavailable.
+- `required` — fail instead of falling back when the helper is unavailable or untrusted.
+- `disabled` — use the legacy in-process desktop path only.
+
+Use the Primitive ABI to inspect or request permissions:
+
+```text
+primitive_call("app.lifecycle", "helper_status")
+primitive_call("app.lifecycle", "request_permissions")
+```
+
+The helper currently owns native Accessibility actions, keyboard/mouse input, app/window inspection, UI-tree reads, and screenshot execution. Clipboard state remains managed by the v0.9.1 full-fidelity clipboard transaction layer.

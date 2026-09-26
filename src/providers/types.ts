@@ -9,7 +9,8 @@ export type ProviderCapability =
   | "ui-tree"
   | "region-screenshot"
   | "clipboard"
-  | "clipboard-transaction";
+  | "clipboard-transaction"
+  | "native-helper";
 
 export interface ProviderStatus {
   id: string;
