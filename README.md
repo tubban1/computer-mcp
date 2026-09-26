@@ -1,6 +1,12 @@
-# computer-mcp
+# AgentOS Runtime
 
-A personal Computer MCP runtime for ChatGPT. It exposes safe, resumable computer control through filesystem, shell, Git, browser, macOS desktop, transactions, dependency graphs, persistent tasks, a stable Primitive ABI, and reusable Skills.
+> Repository/package compatibility name: `computer-mcp`
+
+AgentOS Runtime is a personal computer-agent execution runtime for ChatGPT. It exposes safe, resumable control through filesystem, shell, Git, browser, macOS desktop, transactions, dependency graphs, persistent tasks, a stable Primitive ISA, reusable Skills, action contracts, and resource arbitration.
+
+`v0.8.0` is preserved as the last stable **pre-AgentOS** release for users who prefer the simpler direct-MCP-tool architecture. Starting with `v0.9`, the project evolves as **AgentOS Runtime** while keeping the `computer-mcp` repository/package name for compatibility.
+
+Architecture and 1.0 criteria: [`docs/AGENTOS_RUNTIME.md`](docs/AGENTOS_RUNTIME.md)
 
 ## v0.9 — Primitive & Skill Runtime
 
