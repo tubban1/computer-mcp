@@ -1,6 +1,6 @@
 # AgentOS Runtime Semantic Memory
 
-Status: **v0.9.8 foundation**
+Status: **v0.9.9 foundation**
 
 v0.9.8 closes the first executable M2 Episodic → M3 Semantic promotion path.
 
@@ -93,9 +93,9 @@ Equivalent content is deduplicated by normalized SHA-256 digest.
 
 ## Retrieval and deletion
 
-The same L2 Skill supports status, search, list, get, and delete. Search is deterministic lexical retrieval over title, content, kind, and tags in v0.9.8.
+The same L2 Skill supports status, search, list, get, and delete. v0.9.9 adds `lexical`, local `vector`, and `hybrid` retrieval modes over title, content, kind, and tags.
 
-A future semantic engine can add embeddings/vector retrieval without changing the L1 ISA or the promotion provenance contract.
+The current vectorizer is deterministic `feature-hash-v1`, not a neural embedding model. A future local or hosted neural embedding provider can replace it without changing the L1 ISA or the promotion provenance contract.
 
 ## Verification
 

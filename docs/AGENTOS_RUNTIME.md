@@ -219,7 +219,7 @@ v0.9.5 adds the durable-memory foundation:
 - downstream Primitive steps can consume staged copies through $ref
 - task event history forms task-local Episodic Memory
 - Skill metadata declares version, Primitive ABI requirements, execution mode, and memory policy
-- Semantic Memory remains an explicit future promotion layer rather than implicit auto-learning
+- Semantic Memory uses explicit gated promotion rather than implicit auto-learning; v0.9.9 adds unified recall across global M2 and M3.
 
 Memory architecture: MEMORY_AND_STAGING.md
 
@@ -289,3 +289,24 @@ v0.9.8 closes the first executable M2 Episodic → M3 Semantic path.
 No new L1 Primitive or top-level MCP tool is required.
 
 Architecture: SEMANTIC_MEMORY.md
+
+
+### v0.9.9 — Global Recall, Durable Agent Sessions & Runtime Identity
+
+v0.9.9 adds three Runtime surfaces without adding new top-level MCP tools:
+
+- `runtime.recall` — unified global M2 Episodic + M3 Semantic retrieval
+- `runtime.session` — durable ChatGPT/Antigravity/generic browser session bindings
+- `runtime.identity` — product identity, wake name and aliases
+
+Terminal Persistent Tasks are automatically indexed into encrypted global M2 memory, including failed/blocked/cancelled tasks so failure experience remains recallable without being promoted as semantic truth.
+
+Recall supports lexical, local-vector and hybrid modes. The current 256-dimensional `feature-hash-v1` vectorizer is deterministic and zero-dependency, not a neural embedding model.
+
+Session adapters bind exact conversation URLs/fingerprints, capture the last assistant message, persist turn receipts, and freeze automatic replay if a send is interrupted in an uncertain state.
+
+Persistent Loop phases can now execute either Primitive graphs or Session Adapter operations. This closes the Runtime-level ChatGPT ↔ Antigravity relay path.
+
+The managed browser uses a stable Runtime-owned profile across restarts. `web.session` is the canonical tab/session Primitive family with `tabs`, `use_tab`, `new_tab`, and `close`.
+
+The formal name remains AgentOS Runtime. A configurable wake name such as `Jarvis` is exposed through MCP metadata and capabilities for chats where computer-mcp is connected.

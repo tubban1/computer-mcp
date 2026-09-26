@@ -295,6 +295,13 @@ const definitions: PrimitiveDefinition[] = [
     domain: "web",
     description: "Interact with browser controls.",
     ops: ["click", "type", "use_tab"],
+    opMetadata: {
+      use_tab: {
+        deprecated: true,
+        replacement: "web.session(use_tab)",
+        note: "Tab/session state belongs to web.session; retained for v0.9 compatibility.",
+      },
+    },
     route: (op, args) => {
       const normalized = requireOp(
         op,
@@ -339,14 +346,21 @@ const definitions: PrimitiveDefinition[] = [
   {
     id: "web.session",
     domain: "web",
-    description: "Inspect or close the managed browser session.",
-    ops: ["tabs", "close"],
+    description: "Inspect, switch, create, or close managed browser tabs/sessions.",
+    ops: ["tabs", "use_tab", "new_tab", "close"],
     route: (op, args) => {
-      const normalized = requireOp(op, ["tabs", "close"], "web.session");
-      return {
-        action: normalized === "tabs" ? "browser.tabs" : "browser.close",
-        args,
-      };
+      const normalized = requireOp(
+        op,
+        ["tabs", "use_tab", "new_tab", "close"],
+        "web.session",
+      );
+      const action = {
+        tabs: "browser.tabs",
+        use_tab: "browser.use_tab",
+        new_tab: "browser.new_tab",
+        close: "browser.close",
+      }[normalized]!;
+      return { action, args };
     },
   },
   {

@@ -164,7 +164,7 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
       resources: [resource("browser.session", "shared")],
     };
   }
-  if (["browser.open", "browser.use_tab", "browser.click", "browser.type", "browser.upload", "browser.close"].includes(action)) {
+  if (["browser.open", "browser.use_tab", "browser.new_tab", "browser.click", "browser.type", "browser.upload", "browser.close"].includes(action)) {
     const externallyConsequential = ["browser.click", "browser.type", "browser.upload"].includes(action);
     return {
       riskLevel: externallyConsequential ? "high" : "medium",

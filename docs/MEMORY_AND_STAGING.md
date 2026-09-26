@@ -1,6 +1,6 @@
 # AgentOS Runtime Memory & Staging
 
-Status: **v0.9.8 foundation**
+Status: **v0.9.9 foundation**
 
 AgentOS Runtime treats memory as a runtime plane beside the Primitive ISA, not as a replacement for the ISA.
 
@@ -102,7 +102,7 @@ Current implementation:
 - recovery notes
 - pause/cancel/block history
 
-This is currently task-local episodic memory. A future global episodic ledger can index completed tasks across time without changing the Primitive ISA.
+Task-local events remain the source-of-truth M2 trace. v0.9.9 additionally maintains an encrypted global episodic index of terminal completed/failed/blocked/cancelled tasks so the Planner can recall experience across tasks without changing the Primitive ISA.
 
 ## M3 — Semantic Memory
 
@@ -127,7 +127,7 @@ Status in v0.9.8: implemented as an explicit, gated promotion pipeline.
 
 The Runtime does not turn every execution trace into long-term knowledge. Failed, partial, accidental, or obvious credential-bearing candidates are blocked. Every promoted record keeps sourceTaskId, evidence step ids, event types, evidence/content digests, and gate receipts. The source Task receives a semantic_promoted event so provenance is bidirectional.
 
-Current M3 retrieval is deterministic lexical search. Embedding/vector retrieval can be added later without changing the L1 ISA or the promotion contract.
+v0.9.9 M3 retrieval supports lexical, local-vector, and hybrid modes. The current local vectorizer is deterministic feature hashing rather than a neural embedding model, and can be replaced later without changing the L1 ISA or promotion provenance contract.
 
 See SEMANTIC_MEMORY.md.
 
@@ -267,10 +267,10 @@ Future options include encrypted dormant staging, sensitivity labels, TTL/garbag
 
 Before AgentOS Runtime v1.0:
 
-1. Define the durable Skill compiler contract.
-2. Add global episodic indexing/search.
-3. Improve semantic retrieval beyond lexical matching while preserving provenance.
-4. Add staging TTL, selection/finalization, and garbage collection.
-5. Add artifact sensitivity and retention metadata.
-6. Expand memory conformance tests and promotion policy fixtures.
+1. Freeze the durable Skill compiler contract.
+2. Replace/augment feature-hash vectors with a pluggable neural embedding provider while preserving the recall contract.
+3. Add staging TTL, selection/finalization, and garbage collection.
+4. Add artifact sensitivity and retention metadata.
+5. Expand memory conformance tests and promotion policy fixtures.
+6. Add retention/compaction policy for the global episodic index.
 7. Keep memory APIs outside the frozen core ISA unless a truly provider-independent memory Primitive proves necessary.

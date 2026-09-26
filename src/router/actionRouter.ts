@@ -392,14 +392,28 @@ const actions = {
     openWorld: true,
     run: ({ index }: any) => browserProvider.useTab(index),
   },
+  "browser.new_tab": {
+    provider: "browser",
+    description: "Create a new managed browser tab and optionally navigate it.",
+    schema: z.object({
+      url: z.string().url().optional(),
+      wait_until: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
+    }),
+    openWorld: true,
+    run: ({ url, wait_until }: any) =>
+      browserProvider.newTab(url, wait_until ?? "domcontentloaded"),
+  },
   "browser.snapshot": {
     provider: "browser",
     description: "Read visible page text, links, and controls.",
     schema: z.object({
       max_chars: z.number().int().min(1000).max(100000).optional(),
+      selector: z.string().min(1).optional(),
+      last: z.boolean().optional(),
     }),
     openWorld: true,
-    run: ({ max_chars }: any) => browserProvider.snapshot(max_chars ?? 30000),
+    run: ({ max_chars, selector, last }: any) =>
+      browserProvider.snapshot(max_chars ?? 30000, selector, last ?? false),
   },
   "browser.click": {
     provider: "browser",

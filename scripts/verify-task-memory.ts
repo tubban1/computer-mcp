@@ -15,6 +15,15 @@ const root = path.resolve(
   "..",
 );
 const sourcePath = path.join(root, "tmp-verify-task-memory.txt");
+const scratch = path.join(root, ".tmp-verify-task-memory");
+
+process.env.ALLOWED_DIRECTORIES = root;
+process.env.TASK_DIR = path.join(scratch, "tasks");
+process.env.TASK_KEY_PATH = path.join(scratch, "task.key");
+process.env.TASK_STAGING_DIR = path.join(scratch, "staging");
+process.env.TASK_STAGING_EXPOSE_TO_FS = "true";
+process.env.EPISODIC_INDEX_DIR = path.join(scratch, "episodes");
+process.env.EPISODIC_INDEX_KEY_PATH = path.join(scratch, "episode.key");
 
 let taskId = "";
 let stagingRoot = "";
@@ -78,7 +87,7 @@ try {
 
   const stagedPath = (writeStep.result as any)?.staging?.artifacts?.[0]?.stagedPath;
   assert.equal(typeof stagedPath, "string");
-  assert.ok(stagedPath.startsWith(path.join(os.homedir(), ".computer-mcp", "staging")));
+  assert.ok(stagedPath.startsWith(path.join(scratch, "staging")));
   assert.equal(
     readStep.result,
     "AgentOS durable staging reference\n",
@@ -119,4 +128,5 @@ try {
       .rm(stagingRoot, { recursive: true, force: true })
       .catch(() => undefined);
   }
+  await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
 }

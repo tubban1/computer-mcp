@@ -89,6 +89,10 @@ import {
 } from "./skills/skillRuntime.js";
 import { startPersistentScheduler } from "./runtime/scheduler.js";
 import { startPersistentLoopController } from "./runtime/loopController.js";
+import {
+  getRuntimeIdentity,
+  runtimeIdentityDescription,
+} from "./runtime/runtimeIdentity.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -228,7 +232,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.8",
+    version: "0.9.9",
   });
 
   server.tool(
@@ -893,7 +897,8 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.8",
+          version: "0.9.9",
+          identity: getRuntimeIdentity(),
           allowedDirectories: configuredRoots(),
           runtimeOwnedDirectories: runtimeOwnedRoots(),
           write: envFlag("ALLOW_WRITE", true),
@@ -910,6 +915,13 @@ function createServer() {
           crossPhaseCarryState: true,
           semanticMemory: true,
           semanticPromotion: true,
+          globalEpisodicIndex: true,
+          hybridMemoryRecall: true,
+          localVectorRetrieval: true,
+          sessionAdapters: true,
+          durableAgentRelay: true,
+          persistentBrowserProfile: true,
+          runtimeIdentity: true,
           taskStaging: true,
           durablePrimitiveTasks: true,
           primitiveAbi: true,
@@ -1899,7 +1911,7 @@ function createServer() {
 
   server.tool(
     "skill_run",
-    "Run an AgentOS Runtime Skill such as runtime.compile_task, runtime.schedule, runtime.loop, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Durable Skills may compile Primitive graphs or persistent wake schedules; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.",
+    `Run an AgentOS Runtime Skill such as runtime.compile_task, runtime.schedule, runtime.loop, runtime.memory, runtime.recall, runtime.session, runtime.identity, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. ${runtimeIdentityDescription()} Durable Skills may compile Primitive graphs or persistent wake schedules; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.`,
     {
       skill: z.string().min(1),
       args: z.record(z.unknown()).optional(),
@@ -1988,7 +2000,8 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.8",
+    version: "0.9.9",
+    identity: getRuntimeIdentity(),
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -2004,6 +2017,13 @@ app.get("/health", (_req, res) => {
       crossPhaseCarryState: true,
       semanticMemory: true,
       semanticPromotion: true,
+      globalEpisodicIndex: true,
+      hybridMemoryRecall: true,
+      localVectorRetrieval: true,
+      sessionAdapters: true,
+      durableAgentRelay: true,
+      persistentBrowserProfile: true,
+      runtimeIdentity: true,
       taskStaging: true,
       durablePrimitiveTasks: true,
       primitiveAbi: true,
@@ -2024,5 +2044,5 @@ const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
   console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
   console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
-  console.log(`computer-mcp v0.9.8 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.9 listening on http://127.0.0.1:${port}/mcp`);
 });

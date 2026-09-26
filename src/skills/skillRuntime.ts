@@ -45,6 +45,25 @@ import type {
   SemanticMemoryKind,
   SemanticSensitivity,
 } from "../runtime/semanticStore.js";
+import {
+  rebuildRecallIndexes,
+  recallMemory,
+  recallStatus,
+} from "../runtime/memoryRecall.js";
+import type { PersistentTaskStatus } from "../tasks/taskStore.js";
+import {
+  bindBrowserAgentSession,
+  captureLatestAgentReply,
+  getSessionAdapterContract,
+  identifyBrowserAgentSession,
+  listBrowserAgentSessions,
+  rebindBrowserAgentSession,
+  removeBrowserAgentSession,
+  resolvePendingSessionSend,
+  sendAgentMessage,
+} from "../runtime/sessionAdapters.js";
+import type { SessionAdapterId } from "../runtime/sessionStore.js";
+import { getRuntimeIdentity } from "../runtime/runtimeIdentity.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -121,6 +140,42 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     },
   },
   "runtime.memory": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.recall": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.session": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: ["web.session", "web.query", "web.act"],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.identity": {
     skillVersion: "0.1.0",
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
@@ -411,6 +466,7 @@ function parseLoopPhases(raw: unknown): LoopPhase[] {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
       throw new Error(`Invalid loop phase id at index ${index}: "${id}".`);
     }
+
     const outputRef =
       typeof value.output_ref === "string"
         ? value.output_ref.trim()
@@ -418,12 +474,89 @@ function parseLoopPhases(raw: unknown): LoopPhase[] {
           ? value.outputRef.trim()
           : undefined;
 
+    const sessionRaw =
+      value.session && typeof value.session === "object" && !Array.isArray(value.session)
+        ? (value.session as Record<string, unknown>)
+        : undefined;
+    const hasSteps = Array.isArray(value.steps) && value.steps.length > 0;
+    const hasSession = Boolean(sessionRaw);
+    if (hasSteps === hasSession) {
+      throw new Error(
+        `runtime.loop phase "${id}" must define exactly one of steps or session.`,
+      );
+    }
+
+    let session: LoopPhase["session"];
+    if (sessionRaw) {
+      const bindingId =
+        typeof sessionRaw.binding_id === "string"
+          ? sessionRaw.binding_id.trim()
+          : typeof sessionRaw.bindingId === "string"
+            ? sessionRaw.bindingId.trim()
+            : "";
+      const op =
+        typeof sessionRaw.op === "string"
+          ? sessionRaw.op.trim().toLowerCase()
+          : "";
+      if (!bindingId) {
+        throw new Error(`runtime.loop phase "${id}" session.binding_id is required.`);
+      }
+      if (!["identify", "capture_latest", "send"].includes(op)) {
+        throw new Error(
+          `runtime.loop phase "${id}" session.op must be identify, capture_latest, or send.`,
+        );
+      }
+      session = {
+        bindingId,
+        op: op as "identify" | "capture_latest" | "send",
+        args:
+          sessionRaw.args &&
+          typeof sessionRaw.args === "object" &&
+          !Array.isArray(sessionRaw.args)
+            ? (sessionRaw.args as Record<string, unknown>)
+            : {},
+      };
+    }
+
+    const advanceRaw =
+      value.advance_when &&
+      typeof value.advance_when === "object" &&
+      !Array.isArray(value.advance_when)
+        ? (value.advance_when as Record<string, unknown>)
+        : value.advanceWhen &&
+            typeof value.advanceWhen === "object" &&
+            !Array.isArray(value.advanceWhen)
+          ? (value.advanceWhen as Record<string, unknown>)
+          : undefined;
+
+    const advanceWhen = advanceRaw
+      ? {
+          ...(typeof advanceRaw.path === "string" && advanceRaw.path.trim()
+            ? { path: advanceRaw.path.trim() }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(advanceRaw, "equals")
+            ? { equals: advanceRaw.equals }
+            : {}),
+          ...(typeof advanceRaw.truthy === "boolean"
+            ? { truthy: advanceRaw.truthy }
+            : {}),
+        }
+      : undefined;
+
     return {
       id,
       ...(typeof value.label === "string" && value.label.trim()
         ? { label: value.label.trim() }
         : {}),
-      steps: parsePrimitiveTaskSteps(value.steps, `runtime.loop phase "${id}"`),
+      ...(hasSteps
+        ? {
+            steps: parsePrimitiveTaskSteps(
+              value.steps,
+              `runtime.loop phase "${id}"`,
+            ),
+          }
+        : {}),
+      ...(session ? { session } : {}),
       ...(outputRef ? { outputRef } : {}),
       waitForChange:
         typeof value.wait_for_change === "boolean"
@@ -431,6 +564,7 @@ function parseLoopPhases(raw: unknown): LoopPhase[] {
           : typeof value.waitForChange === "boolean"
             ? value.waitForChange
             : false,
+      ...(advanceWhen ? { advanceWhen } : {}),
     };
   });
 }
@@ -460,6 +594,43 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function parseRecallMode(value: unknown): "hybrid" | "lexical" | "vector" {
+  const mode =
+    typeof value === "string" && value.trim()
+      ? value.trim().toLowerCase()
+      : "hybrid";
+  if (!["hybrid", "lexical", "vector"].includes(mode)) {
+    throw new Error('mode must be "hybrid", "lexical", or "vector".');
+  }
+  return mode as "hybrid" | "lexical" | "vector";
+}
+
+function parseTaskStatuses(value: unknown): PersistentTaskStatus[] {
+  const allowed = new Set<PersistentTaskStatus>([
+    "pending",
+    "running",
+    "paused",
+    "blocked",
+    "failed",
+    "completed",
+    "cancelled",
+  ]);
+  return stringArray(value)
+    .map((item) => item.trim().toLowerCase() as PersistentTaskStatus)
+    .filter((item) => allowed.has(item));
+}
+
+function parseSessionAdapter(value: unknown): SessionAdapterId {
+  const adapter =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!["chatgpt", "antigravity", "generic-browser"].includes(adapter)) {
+    throw new Error(
+      'adapter must be "chatgpt", "antigravity", or "generic-browser".',
+    );
+  }
+  return adapter as SessionAdapterId;
 }
 
 function shellQuote(value: string): string {
@@ -531,6 +702,37 @@ const MEMORY_CONTRACT: SkillContract = {
   requiresVerification: true,
   retryPolicy: "manual",
   resources: [],
+};
+
+const RECALL_CONTRACT: SkillContract = {
+  riskLevel: "low",
+  idempotent: true,
+  sideEffects: ["derived_episodic_index_rebuild_when_requested"],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [],
+};
+
+const IDENTITY_CONTRACT: SkillContract = {
+  riskLevel: "low",
+  idempotent: true,
+  sideEffects: [],
+  requiresVerification: false,
+  retryPolicy: "automatic",
+  resources: [],
+};
+
+const SESSION_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: [
+    "browser_session_binding",
+    "external_model_turn",
+    "persistent_session_receipt",
+  ],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [{ key: "browser.session", mode: "exclusive" }],
 };
 
 const WECHAT_READ_CONTRACT: SkillContract = {
@@ -758,7 +960,7 @@ const skills: SkillDefinition[] = [
       op: "create | list | status | cancel | delete. Default: create.",
       label: "Human-readable loop label for create.",
       phases:
-        "2-16 phases. Each phase has {id,label?,steps,output_ref?,wait_for_change?}. Use {{loop.lastOutput}} or {{loop.phase.<phaseId>}} in step args to carry state across phases.",
+        "2-16 phases. Each phase defines exactly one execution kind: Primitive steps, or session:{binding_id,op:identify|capture_latest|send,args?}. Optional advance_when and wait_for_change keep the phase waiting. Carry supports nested values such as {{loop.lastOutput.reply}} and {{loop.phase.capture.reply}}.",
       poll_interval_ms:
         "Delay between controller phases or re-checks; default 5000 ms, minimum 1000 ms.",
       max_cycles: "Optional maximum complete loop cycles.",
@@ -771,7 +973,14 @@ const skills: SkillDefinition[] = [
       label: args.label ?? null,
       phaseCount: Array.isArray(args.phases) ? args.phases.length : 0,
       controller: "persistent_stateful_loop",
-      carrySyntax: ["{{loop.lastOutput}}", "{{loop.phase.<phaseId>}}"],
+      carrySyntax: [
+        "{{loop.lastOutput}}",
+        "{{loop.lastOutput.reply}}",
+        "{{loop.phase.<phaseId>}}",
+        "{{loop.phase.<phaseId>.reply}}",
+      ],
+      phaseKinds: ["primitive_graph", "session_adapter"],
+      advanceConditions: true,
       changeDetection: true,
       survivesMcpRequest: true,
       survivesRuntimeRestart: true,
@@ -897,6 +1106,7 @@ const skills: SkillDefinition[] = [
               typeof args.limit === "number"
                 ? args.limit
                 : 20,
+            mode: parseRecallMode(args.mode),
           },
         );
       }
@@ -934,6 +1144,263 @@ const skills: SkillDefinition[] = [
         'runtime.memory op must be "status", "inspect", "promote", "search", "list", "get", or "delete".',
       );
     },
+  },
+  {
+    id: "runtime.recall",
+    domain: "runtime",
+    description:
+      "Recall experience across the global M2 episodic index and M3 semantic memory using hybrid, lexical, or local vector retrieval.",
+    keywords: [
+      "recall",
+      "experience",
+      "history",
+      "similar task",
+      "episodic",
+      "semantic",
+      "vector",
+      "回忆",
+      "经验",
+      "过去任务",
+      "相似任务",
+    ],
+    contract: RECALL_CONTRACT,
+    inputs: {
+      op: "search | status | rebuild. Default: search.",
+      query: "Recall query for search.",
+      scope: "episodic | semantic | both. Default: both.",
+      mode: "hybrid | lexical | vector. Default: hybrid.",
+      statuses:
+        "Optional episodic task statuses such as completed, failed, blocked, cancelled.",
+      kind: "Optional semantic kind filter.",
+      tags: "Optional semantic tags.",
+      limit: "Maximum results; default 20, max 100.",
+    },
+    dryRunPlan: (args) => ({
+      op: typeof args.op === "string" ? args.op : "search",
+      query: args.query ?? null,
+      scope: args.scope ?? "both",
+      mode: args.mode ?? "hybrid",
+      globalEpisodicIndex: true,
+      semanticMemory: true,
+      localVectorizer: "feature-hash-v1",
+      neuralEmbedding: false,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "search";
+
+      if (operation === "status") {
+        return await recallStatus();
+      }
+
+      if (operation === "rebuild") {
+        return await rebuildRecallIndexes();
+      }
+
+      if (operation !== "search") {
+        throw new Error(
+          'runtime.recall op must be "search", "status", or "rebuild".',
+        );
+      }
+
+      const rawScope =
+        typeof args.scope === "string" && args.scope.trim()
+          ? args.scope.trim().toLowerCase()
+          : "both";
+      if (!["episodic", "semantic", "both"].includes(rawScope)) {
+        throw new Error('scope must be "episodic", "semantic", or "both".');
+      }
+
+      const kind =
+        typeof args.kind === "string" && args.kind.trim()
+          ? parseSemanticKind(args.kind)
+          : undefined;
+
+      return await recallMemory(
+        typeof args.query === "string" ? args.query : "",
+        {
+          scope: rawScope as "episodic" | "semantic" | "both",
+          mode: parseRecallMode(args.mode),
+          limit: typeof args.limit === "number" ? args.limit : 20,
+          statuses: parseTaskStatuses(args.statuses),
+          ...(kind ? { semanticKind: kind } : {}),
+          tags: stringArray(args.tags),
+        },
+      );
+    },
+  },
+  {
+    id: "runtime.session",
+    domain: "runtime",
+    description:
+      "Bind, identify, capture, and send to durable browser agent sessions such as ChatGPT and Antigravity with session fingerprints and turn receipts.",
+    keywords: [
+      "session",
+      "chatgpt",
+      "antigravity",
+      "agent relay",
+      "capture latest",
+      "same session",
+      "会话",
+      "接力",
+      "同一个session",
+    ],
+    contract: SESSION_CONTRACT,
+    inputs: {
+      op:
+        "adapters | bind | identify | capture_latest | send | resolve_pending | rebind | list | delete.",
+      adapter: "chatgpt | antigravity | generic-browser for bind.",
+      session_id: "Persistent session binding id for identify/capture/send/rebind/delete.",
+      label: "Optional human label for bind.",
+      use_active:
+        "Bind/rebind the active managed-browser tab instead of matching URL/title.",
+      open_url:
+        "Optional URL to open in a new managed-browser tab before bind.",
+      url_pattern: "Optional URL substring for bind/rebind.",
+      title_pattern: "Optional title substring for bind/rebind.",
+      input_selector: "Optional Playwright selector override for the prompt input.",
+      send_selector: "Optional send-control selector override.",
+      message_selector:
+        "Optional selector for assistant messages; capture_latest reads the last matching element.",
+      busy_markers:
+        "Optional control-label strings that indicate generation is still running.",
+      text: "Message text for send.",
+      confirm:
+        "Must be true for send because it creates an external model turn.",
+      allow_duplicate:
+        "Allow resending the exact same text despite the durable send receipt.",
+      resolution:
+        "For resolve_pending: sent | not_sent after reviewing an uncertain interrupted send.",
+      max_chars: "Maximum captured page/message text.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "adapters",
+      adapter: args.adapter ?? null,
+      sessionId: args.session_id ?? null,
+      sameSessionEnforced: true,
+      duplicateSendReceipt: true,
+      browserProfilePersistentAcrossRuntimeRestart: true,
+      contractVersion: 1,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "adapters";
+
+      if (operation === "adapters") {
+        return getSessionAdapterContract();
+      }
+
+      if (operation === "list") {
+        return await listBrowserAgentSessions();
+      }
+
+      if (operation === "bind") {
+        return await bindBrowserAgentSession({
+          adapterId: parseSessionAdapter(args.adapter),
+          label: typeof args.label === "string" ? args.label : undefined,
+          useActive: optionalBoolean(args, "use_active", false),
+          openUrl:
+            typeof args.open_url === "string" ? args.open_url : undefined,
+          urlPattern:
+            typeof args.url_pattern === "string" ? args.url_pattern : undefined,
+          titlePattern:
+            typeof args.title_pattern === "string"
+              ? args.title_pattern
+              : undefined,
+          inputSelector:
+            typeof args.input_selector === "string"
+              ? args.input_selector
+              : undefined,
+          sendSelector:
+            typeof args.send_selector === "string"
+              ? args.send_selector
+              : undefined,
+          messageSelector:
+            typeof args.message_selector === "string"
+              ? args.message_selector
+              : undefined,
+          busyMarkers: stringArray(args.busy_markers),
+        });
+      }
+
+      const sessionId = requiredText(args, "session_id");
+
+      if (operation === "identify") {
+        return await identifyBrowserAgentSession(sessionId);
+      }
+
+      if (operation === "capture_latest") {
+        return await captureLatestAgentReply(sessionId, {
+          maxChars:
+            typeof args.max_chars === "number" ? args.max_chars : undefined,
+        });
+      }
+
+      if (operation === "send") {
+        return await sendAgentMessage(sessionId, requiredText(args, "text"), {
+          confirm: optionalBoolean(args, "confirm", false),
+          allowDuplicate: optionalBoolean(args, "allow_duplicate", false),
+        });
+      }
+
+      if (operation === "resolve_pending") {
+        const resolution =
+          typeof args.resolution === "string"
+            ? args.resolution.trim().toLowerCase()
+            : "";
+        if (!["sent", "not_sent"].includes(resolution)) {
+          throw new Error('resolution must be "sent" or "not_sent".');
+        }
+        return await resolvePendingSessionSend(
+          sessionId,
+          resolution as "sent" | "not_sent",
+        );
+      }
+
+      if (operation === "rebind") {
+        return await rebindBrowserAgentSession(sessionId, {
+          useActive: optionalBoolean(args, "use_active", false),
+          urlPattern:
+            typeof args.url_pattern === "string" ? args.url_pattern : undefined,
+          titlePattern:
+            typeof args.title_pattern === "string"
+              ? args.title_pattern
+              : undefined,
+        });
+      }
+
+      if (operation === "delete") {
+        return await removeBrowserAgentSession(sessionId);
+      }
+
+      throw new Error(
+        'runtime.session op must be "adapters", "bind", "identify", "capture_latest", "send", "resolve_pending", "rebind", "list", or "delete".',
+      );
+    },
+  },
+  {
+    id: "runtime.identity",
+    domain: "runtime",
+    description:
+      "Return the AgentOS Runtime product identity, wake name, aliases, and invocation semantics for cross-chat activation.",
+    keywords: [
+      "identity",
+      "name",
+      "wake name",
+      "alias",
+      "jarvis",
+      "agentos",
+      "名字",
+      "唤醒",
+      "别名",
+    ],
+    contract: IDENTITY_CONTRACT,
+    inputs: {},
+    dryRunPlan: () => ({
+      readOnly: true,
+      source: "runtime_environment",
+    }),
+    run: async () => getRuntimeIdentity(),
   },
   {
     id: "wechat.read",
@@ -1987,6 +2454,7 @@ function skillScore(goal: string, skill: SkillDefinition): number {
 }
 
 export async function getCapabilityManifest(goal = "") {
+  const identity = getRuntimeIdentity();
   const recommended = [...skills]
     .map((skill) => ({ skill, score: skillScore(goal, skill) }))
     .filter((item) => !goal.trim() || item.score > 0)
@@ -2004,8 +2472,11 @@ export async function getCapabilityManifest(goal = "") {
 
   return {
     goal: goal || null,
+    identity,
     architecture: {
-      name: "AgentOS Runtime",
+      name: identity.productName,
+      wakeName: identity.wakeName,
+      aliases: identity.aliases,
       planner: "ChatGPT",
       layerModel: "L3 Planner → L2 Skill → L1 Primitive ISA → L0.5 Action → L0 Provider",
       skillRuntime: "v0.9",
@@ -2033,13 +2504,23 @@ export async function getCapabilityManifest(goal = "") {
       memoryPlane: {
         working: "durable task step outputs + $ref",
         staging: "file-backed task artifacts",
-        episodic: "task-local event history",
-        semantic: "planned explicit promotion",
+        episodic:
+          "task-local events + encrypted global terminal-task index with hybrid/vector retrieval",
+        semantic:
+          "explicit gated promotion + hybrid/lexical/local-vector retrieval",
       },
       persistentTasks: "v0.8 + v0.9.5 Primitive-task path",
       persistentScheduler: "v0.9.6 wake scheduler + scheduled Primitive graphs",
-      persistentLoopController: "v0.9.7 stateful multi-phase loops",
+      persistentLoopController:
+        "v0.9.7 stateful loops + v0.9.9 durable session phases",
       semanticPromotion: "v0.9.8 explicit M2 → gate → M3 pipeline",
+      globalEpisodicIndex: "v0.9.9 encrypted terminal-task experience index",
+      hybridRecall:
+        "v0.9.9 unified episodic + semantic lexical/vector recall",
+      sessionAdapters:
+        "v0.9.9 ChatGPT/Antigravity browser session bindings with fingerprints and turn receipts",
+      browserSessionModel:
+        "persistent browser profile + exact conversation URL + crash-safe pending-send receipt",
       dependencyGraph: "v0.7",
       providerRouter: "v0.6",
       providers: "v0.5",

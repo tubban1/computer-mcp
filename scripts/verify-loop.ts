@@ -15,6 +15,8 @@ process.env.TASK_DIR = path.join(scratch, "tasks");
 process.env.TASK_KEY_PATH = path.join(scratch, "task.key");
 process.env.TASK_STAGING_DIR = path.join(scratch, "staging");
 process.env.TASK_STAGING_EXPOSE_TO_FS = "true";
+process.env.EPISODIC_INDEX_DIR = path.join(scratch, "episodes");
+process.env.EPISODIC_INDEX_KEY_PATH = path.join(scratch, "episode.key");
 
 const {
   cancelPersistentLoop,

@@ -14,6 +14,8 @@ process.env.TASK_STAGING_DIR = path.join(scratch, "staging");
 process.env.TASK_STAGING_EXPOSE_TO_FS = "true";
 process.env.SEMANTIC_MEMORY_DIR = path.join(scratch, "semantic");
 process.env.SEMANTIC_MEMORY_KEY_PATH = path.join(scratch, "semantic.key");
+process.env.EPISODIC_INDEX_DIR = path.join(scratch, "episodes");
+process.env.EPISODIC_INDEX_KEY_PATH = path.join(scratch, "episode.key");
 
 const {
   createPersistentPrimitiveTask,

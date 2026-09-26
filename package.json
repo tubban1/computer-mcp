@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,10 @@
     "verify:task-memory": "tsx scripts/verify-task-memory.ts",
     "verify:scheduler": "tsx scripts/verify-scheduler.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",
-    "verify:semantic-memory": "tsx scripts/verify-semantic-memory.ts"
+    "verify:semantic-memory": "tsx scripts/verify-semantic-memory.ts",
+    "verify:recall": "tsx scripts/verify-recall.ts",
+    "verify:session-adapters": "tsx scripts/verify-session-adapters.ts",
+    "verify:identity": "tsx scripts/verify-runtime-identity.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

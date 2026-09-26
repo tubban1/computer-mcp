@@ -7,6 +7,11 @@ import {
   type PrimitiveTaskStep,
 } from "../tasks/taskRuntime.js";
 import {
+  captureLatestAgentReply,
+  identifyBrowserAgentSession,
+  sendAgentMessage,
+} from "./sessionAdapters.js";
+import {
   deleteLoopRecord,
   getLoopStorageInfo,
   listLoopRecords,
@@ -68,10 +73,21 @@ function resolveTaskRef(
 
 function loopValue(loop: PersistentLoop, pathValue: string): unknown {
   if (pathValue === "lastOutput") return loop.lastOutput;
+  if (pathValue.startsWith("lastOutput.")) {
+    return resolvePath(
+      loop.lastOutput,
+      pathValue.slice("lastOutput.".length),
+    );
+  }
   if (pathValue === "cycleCount") return loop.cycleCount;
   if (pathValue === "transitionCount") return loop.transitionCount;
   if (pathValue.startsWith("phase.")) {
-    return loop.phaseOutputs[pathValue.slice("phase.".length)];
+    const remainder = pathValue.slice("phase.".length);
+    const [phaseId, ...segments] = remainder.split(".");
+    const phaseOutput = phaseId ? loop.phaseOutputs[phaseId] : undefined;
+    return segments.length > 0
+      ? resolvePath(phaseOutput, segments.join("."))
+      : phaseOutput;
   }
   throw new Error(`Unknown loop template reference "${pathValue}".`);
 }
@@ -108,7 +124,7 @@ function instantiatePhaseSteps(
   phase: LoopPhase,
   loop: PersistentLoop,
 ): PrimitiveTaskStep[] {
-  return phase.steps.map((step) => ({
+  return (phase.steps ?? []).map((step) => ({
     ...step,
     args: resolveLoopTemplates(step.args ?? {}, loop) as Record<string, unknown>,
   }));
@@ -118,6 +134,73 @@ function currentPhase(loop: PersistentLoop): LoopPhase {
   const phase = loop.phases[loop.currentPhaseIndex];
   if (!phase) throw new Error("Persistent loop currentPhaseIndex is invalid.");
   return phase;
+}
+
+function advanceConditionMatches(
+  output: unknown,
+  phase: LoopPhase,
+): boolean {
+  const condition = phase.advanceWhen;
+  if (!condition) return true;
+  const value = condition.path
+    ? resolvePath(output, condition.path)
+    : output;
+
+  if (Object.prototype.hasOwnProperty.call(condition, "equals")) {
+    return stableHash(value) === stableHash(condition.equals);
+  }
+  if (typeof condition.truthy === "boolean") {
+    return Boolean(value) === condition.truthy;
+  }
+  return Boolean(value);
+}
+
+async function executeSessionPhase(
+  phase: LoopPhase,
+  loop: PersistentLoop,
+): Promise<unknown> {
+  if (!phase.session) {
+    throw new Error("Session loop phase is missing its session action.");
+  }
+  const bindingId = String(
+    resolveLoopTemplates(phase.session.bindingId, loop),
+  );
+  const args = resolveLoopTemplates(
+    phase.session.args ?? {},
+    loop,
+  ) as Record<string, unknown>;
+
+  if (phase.session.op === "identify") {
+    return await identifyBrowserAgentSession(bindingId);
+  }
+
+  if (phase.session.op === "capture_latest") {
+    return await captureLatestAgentReply(bindingId, {
+      maxChars:
+        typeof args.max_chars === "number"
+          ? args.max_chars
+          : undefined,
+    });
+  }
+
+  if (phase.session.op === "send") {
+    const text =
+      typeof args.text === "string" ? args.text.trim() : "";
+    if (!text) {
+      throw new Error(
+        `Session loop phase "${phase.id}" send requires args.text.`,
+      );
+    }
+    return await sendAgentMessage(bindingId, text, {
+      confirm: args.confirm === true,
+      allowDuplicate: args.allow_duplicate === true,
+      deduplicateAsSuccess: true,
+    });
+  }
+
+  throw new Error(
+    `Unsupported session loop operation "${phase.session.op}".`,
+  );
 }
 
 function summarize(loop: PersistentLoop) {
@@ -162,12 +245,36 @@ export async function createPersistentLoop(input: CreateLoopInput) {
     }
     if (ids.has(phase.id)) throw new Error(`Duplicate loop phase id "${phase.id}".`);
     ids.add(phase.id);
-    if (phase.waitForChange && !phase.outputRef) {
-      throw new Error(`Loop phase "${phase.id}" requires outputRef when waitForChange=true.`);
+    const hasPrimitiveSteps =
+      Array.isArray(phase.steps) && phase.steps.length > 0;
+    const hasSessionAction = Boolean(phase.session);
+    if (hasPrimitiveSteps === hasSessionAction) {
+      throw new Error(
+        `Loop phase "${phase.id}" must define exactly one execution kind: primitive steps or a session action.`,
+      );
     }
-    // Validate static topology now. Template placeholders are strings and remain
-    // type-compatible for common text-based relay operations.
-    validatePrimitiveTaskSteps(phase.steps);
+    if (phase.waitForChange && !phase.outputRef && !phase.session) {
+      throw new Error(
+        `Loop phase "${phase.id}" requires outputRef when waitForChange=true for Primitive execution.`,
+      );
+    }
+    if (hasPrimitiveSteps) {
+      // Validate static topology now. Template placeholders are strings and
+      // remain type-compatible for common text-based relay operations.
+      validatePrimitiveTaskSteps(phase.steps!);
+    }
+    if (phase.session) {
+      if (!phase.session.bindingId.trim()) {
+        throw new Error(
+          `Loop phase "${phase.id}" session.bindingId is required.`,
+        );
+      }
+      if (!["identify", "capture_latest", "send"].includes(phase.session.op)) {
+        throw new Error(
+          `Loop phase "${phase.id}" has unsupported session op "${phase.session.op}".`,
+        );
+      }
+    }
   }
 
   const now = Date.now();
@@ -231,7 +338,7 @@ export async function createPersistentLoop(input: CreateLoopInput) {
 }
 
 function advance(loop: PersistentLoop, output: unknown, phase: LoopPhase): void {
-  if (phase.outputRef) {
+  if (phase.outputRef || phase.session || output !== undefined) {
     loop.lastOutput = output;
     loop.phaseOutputs[phase.id] = output;
     loop.phaseHashes[phase.id] = stableHash(output);
@@ -263,6 +370,66 @@ async function executeLoop(loopId: string): Promise<void> {
     }
 
     const phase = currentPhase(loop);
+
+    if (phase.session) {
+      let output: unknown;
+      try {
+        output = await executeSessionPhase(phase, loop);
+        loop.lastTaskStatus = "session_completed";
+        loop.lastError = undefined;
+      } catch (error) {
+        loop.lastError = error instanceof Error ? error.message : String(error);
+        loop.lastTaskStatus = "session_blocked";
+        loop.enabled = false;
+        loop.nextRunAt = null;
+        loop.stoppedReason =
+          `Session phase "${phase.id}" stopped for review: ${loop.lastError}`;
+        await writeLoop(loop);
+        return;
+      }
+
+      const previousHash = loop.phaseHashes[phase.id];
+      const outputHash = stableHash(output);
+
+      if (!advanceConditionMatches(output, phase)) {
+        loop.lastTaskStatus = "session_waiting";
+        loop.nextRunAt = new Date(
+          Date.now() + loop.pollIntervalMs,
+        ).toISOString();
+        await writeLoop(loop);
+        return;
+      }
+
+      if (
+        phase.waitForChange &&
+        previousHash !== undefined &&
+        outputHash === previousHash
+      ) {
+        loop.lastTaskStatus = "session_waiting";
+        loop.nextRunAt = new Date(
+          Date.now() + loop.pollIntervalMs,
+        ).toISOString();
+        await writeLoop(loop);
+        return;
+      }
+
+      advance(loop, output, phase);
+
+      if (loop.maxCycles && loop.cycleCount >= loop.maxCycles) {
+        loop.enabled = false;
+        loop.nextRunAt = null;
+        loop.stoppedReason = `Reached maxCycles=${loop.maxCycles}.`;
+        await writeLoop(loop);
+        return;
+      }
+
+      loop.nextRunAt = new Date(
+        Date.now() + loop.pollIntervalMs,
+      ).toISOString();
+      await writeLoop(loop);
+      return;
+    }
+
     let taskId = loop.activeTaskId;
 
     if (!taskId) {

@@ -10,12 +10,26 @@ import {
 } from "node:crypto";
 import type { PrimitiveTaskStep } from "../tasks/taskRuntime.js";
 
+export type LoopAdvanceWhen = {
+  path?: string;
+  equals?: unknown;
+  truthy?: boolean;
+};
+
+export type LoopSessionAction = {
+  bindingId: string;
+  op: "identify" | "capture_latest" | "send";
+  args?: Record<string, unknown>;
+};
+
 export type LoopPhase = {
   id: string;
   label?: string;
-  steps: PrimitiveTaskStep[];
+  steps?: PrimitiveTaskStep[];
+  session?: LoopSessionAction;
   outputRef?: string;
   waitForChange?: boolean;
+  advanceWhen?: LoopAdvanceWhen;
 };
 
 export type PersistentLoop = {

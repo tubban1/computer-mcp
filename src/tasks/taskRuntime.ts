@@ -16,6 +16,7 @@ import {
   ensureTaskStage,
   stageArtifactsFromResult,
 } from "./taskStaging.js";
+import { indexTaskEpisode } from "../runtime/episodicIndex.js";
 import {
   appendTaskEvent,
   deletePersistentTaskRecord,
@@ -679,6 +680,7 @@ export async function runPersistentTask(
 
   let task = await loadTask(id);
   if (task.status === "completed") {
+    await indexTaskEpisode(task).catch(() => undefined);
     return {
       alreadyCompleted: true,
       ...summarizeTask(task, true),
@@ -1034,6 +1036,25 @@ export async function runPersistentTask(
       task.blockedAt ??= new Date().toISOString();
     } else if (task.status === "cancelled") {
       task.cancelledAt ??= new Date().toISOString();
+    }
+
+    if (["completed", "failed", "blocked", "cancelled"].includes(task.status)) {
+      try {
+        const indexed = await indexTaskEpisode(task);
+        if (indexed.indexed) {
+          appendTaskEvent(task, {
+            type: "global_episode_indexed",
+            message: `Indexed terminal task in global episodic memory as ${indexed.episodeId}.`,
+          });
+        }
+      } catch (error) {
+        appendTaskEvent(task, {
+          type: "episodic_index_warning",
+          message:
+            "Task reached a terminal state, but global episodic indexing failed: " +
+            (error instanceof Error ? error.message : String(error)),
+        });
+      }
     }
 
     await writePersistentTask(task);

@@ -6,6 +6,12 @@ import {
   type PersistentTask,
 } from "../tasks/taskStore.js";
 import {
+  hybridRetrievalScore,
+  LOCAL_VECTOR_DIMENSIONS,
+  LOCAL_VECTORIZER,
+  vectorizeText,
+} from "./retrievalVector.js";
+import {
   deleteSemanticMemory,
   findSemanticMemoryByDigest,
   getSemanticStorageInfo,
@@ -383,16 +389,13 @@ export async function searchSemanticMemories(
     kind?: SemanticMemoryKind;
     tags?: string[];
     limit?: number;
+    mode?: "hybrid" | "lexical" | "vector";
   },
 ) {
   const records = await listSemanticMemories();
-  const tokens = query
-    .toLowerCase()
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
   const requiredTags = normalizeTags(options?.tags ?? []);
   const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100);
+  const mode = options?.mode ?? "hybrid";
 
   return records
     .filter((record) => !options?.kind || record.kind === options.kind)
@@ -402,31 +405,35 @@ export async function searchSemanticMemories(
         requiredTags.every((tag) => record.tags.includes(tag)),
     )
     .map((record) => {
-      const haystack = [
+      const searchableText = [
         record.title,
         record.content,
         record.kind,
         ...record.tags,
-      ]
-        .join(" ")
-        .toLowerCase();
-      const score =
-        tokens.length === 0
-          ? 1
-          : tokens.reduce(
-              (sum, token) => sum + (haystack.includes(token) ? 1 : 0),
-              0,
-            );
+      ].join(" ");
+      const vector = vectorizeText(searchableText);
+      const score = query.trim()
+        ? hybridRetrievalScore(query, searchableText, vector, mode)
+        : { lexical: 0, vector: 0, combined: 1 };
       return { record, score };
     })
-    .filter((item) => tokens.length === 0 || item.score > 0)
+    .filter((item) => !query.trim() || item.score.combined > 0)
     .sort(
       (a, b) =>
-        b.score - a.score ||
+        b.score.combined - a.score.combined ||
         b.record.updatedAt.localeCompare(a.record.updatedAt),
     )
     .slice(0, limit)
-    .map(({ record, score }) => ({ ...record, relevanceScore: score }));
+    .map(({ record, score }) => ({
+      ...record,
+      relevanceScore: score.combined,
+      retrievalScore: score,
+      vectorizer: {
+        id: LOCAL_VECTORIZER,
+        dimensions: LOCAL_VECTOR_DIMENSIONS,
+        neuralEmbedding: false,
+      },
+    }));
 }
 
 export async function getSemanticMemory(id: string) {
@@ -451,6 +458,14 @@ export async function semanticMemoryStatus() {
     promotionMode: "explicit",
     recordCount: records.length,
     storage: getSemanticStorageInfo(),
+    retrieval: {
+      modes: ["hybrid", "lexical", "vector"],
+      vectorizer: {
+        id: LOCAL_VECTORIZER,
+        dimensions: LOCAL_VECTOR_DIMENSIONS,
+        neuralEmbedding: false,
+      },
+    },
     kinds: [...KINDS],
     sensitivities: [...SENSITIVITIES],
   };

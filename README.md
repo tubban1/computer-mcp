@@ -783,7 +783,7 @@ The task runtime now exposes four memory layers:
 - **Working Memory** — succeeded step outputs and $ref values, stored inside the encrypted persistent task record.
 - **Staging / Artifact Memory** — file-backed intermediate assets under ~/.computer-mcp/staging/<task_id>/.
 - **Episodic Memory** — task events, retries, runs, pause/cancel/recovery history.
-- **Semantic Memory** — intentionally not auto-promoted yet; future promotion will require explicit quality/privacy gates.
+- **Semantic Memory** — explicit gated M2→M3 promotion is implemented; v0.9.9 adds unified episodic/semantic hybrid recall.
 
 Persistent tasks automatically create:
 
@@ -911,3 +911,41 @@ Promotion requires a completed task with succeeded evidence, passes deterministi
 Verification: `npm run verify:semantic-memory`.
 
 Architecture: [`docs/SEMANTIC_MEMORY.md`](docs/SEMANTIC_MEMORY.md)
+
+
+## v0.9.9 — Global Recall, Durable Agent Sessions & Runtime Identity
+
+v0.9.9 connects cross-task memory recall to durable browser-agent session orchestration.
+
+New L2 Skills:
+
+```text
+runtime.recall
+runtime.session
+runtime.identity
+```
+
+Global M2 Episodic Memory now indexes terminal completed/failed/blocked/cancelled tasks in an encrypted store. `runtime.recall` searches M2 episodes and M3 semantic memory together with lexical, local-vector, or hybrid ranking. The local `feature-hash-v1` vectorizer is deterministic and zero-dependency; it is not a neural embedding model and can be replaced later without changing the recall contract.
+
+Session Adapter Contract adds durable ChatGPT, Antigravity, and generic-browser bindings with exact conversation fingerprints, last-assistant-message capture, turn receipts, duplicate-send protection, and crash-safe `pendingSend` handling.
+
+`runtime.loop` now supports Session Adapter phases in addition to Primitive graph phases, making a persistent ChatGPT → Antigravity → ChatGPT relay directly expressible.
+
+The managed browser uses the stable Runtime profile `~/.computer-mcp/browser-profiles/default` by default so login state can survive Runtime restarts. `web.session` is now the canonical tab/session family with `tabs`, `use_tab`, `new_tab`, and `close`; the old `web.act(use_tab)` path remains deprecated-compatible.
+
+AgentOS Runtime also has a configurable wake identity. The formal name remains **AgentOS Runtime** and the default wake name is **AgentOS**. Set `AGENTOS_WAKE_NAME=Jarvis` (plus optional `AGENTOS_ALIASES`) to address it as Jarvis in chats where computer-mcp is connected.
+
+Verification:
+
+```bash
+npm run verify:recall
+npm run verify:session-adapters
+npm run verify:identity
+```
+
+Architecture:
+
+- [Global Episodic Recall](docs/EPISODIC_RECALL.md)
+- [Session Adapter Contract](docs/SESSION_ADAPTERS.md)
+- [Runtime Identity](docs/RUNTIME_IDENTITY.md)
+- [Persistent Loop Controller](docs/LOOP_CONTROLLER.md)
