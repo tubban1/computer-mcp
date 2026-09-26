@@ -54,6 +54,7 @@ import {
   ensureWorkspaceWriteLease,
 } from "../runtime/workspaceLeaseManager.js";
 import { currentExecutionContext } from "../runtime/executionContext.js";
+import { runtimeLifecycle } from "../runtime/runtimeLifecycle.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -777,6 +778,18 @@ export async function executeRoutedAction(
   const parsed = definition.schema.parse(args ?? {});
   const contract = getActionContract(action, parsed);
   const startedAt = Date.now();
+  const executionContext = currentExecutionContext();
+  const lifecycleMutation =
+    contract.sideEffects.length > 0
+      ? runtimeLifecycle.beginMutation(action, {
+          context: executionContext,
+          allowDuringDrain:
+            Boolean(executionContext.taskId) ||
+            ["shell.kill", "tx.complete", "tx.rollback"].includes(action),
+        })
+      : null;
+
+  try {
   const bypass = new Set(options?.bypassResourceKeys ?? []);
 
   const workspaces = await resolveActionWorkspaces(action, parsed);
@@ -793,7 +806,6 @@ export async function executeRoutedAction(
     ...workspaceResources,
   ];
   const workspaceOwnership: Array<Record<string, unknown>> = [];
-  const executionContext = currentExecutionContext();
   for (const item of workspaces) {
     if (item.mode === "write") {
       if (executionContext.taskId) {
@@ -849,6 +861,9 @@ export async function executeRoutedAction(
     workspaceOwnership,
     result: executed.result,
   };
+  } finally {
+    if (lifecycleMutation) runtimeLifecycle.endMutation(lifecycleMutation.id);
+  }
 }
 
 export async function executeActionBatch(

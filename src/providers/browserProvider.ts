@@ -63,7 +63,27 @@ async function findFreePort(): Promise<number> {
   });
 }
 
-async function waitForCdp(port: number, child: ChildProcess, timeoutMs = 20_000): Promise<void> {
+function browserStartupTimeoutMs(): number {
+  const configured = Number(process.env.BROWSER_STARTUP_TIMEOUT_MS);
+  if (Number.isFinite(configured)) {
+    return Math.min(Math.max(Math.trunc(configured), 5_000), 120_000);
+  }
+  return 60_000;
+}
+
+function browserConnectTimeoutMs(): number {
+  const configured = Number(process.env.BROWSER_CONNECT_TIMEOUT_MS);
+  if (Number.isFinite(configured)) {
+    return Math.min(Math.max(Math.trunc(configured), 5_000), 120_000);
+  }
+  return 30_000;
+}
+
+async function waitForCdp(
+  port: number,
+  child: ChildProcess,
+  timeoutMs = browserStartupTimeoutMs(),
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError = "";
 
@@ -134,6 +154,8 @@ class BrowserProvider implements ComputerProvider {
         processArch: process.arch,
         rosetta: runningUnderRosetta(),
         browserSpawnArch: runningUnderRosetta() ? "arm64" : process.arch,
+        startupTimeoutMs: browserStartupTimeoutMs(),
+        connectTimeoutMs: browserConnectTimeoutMs(),
       },
     };
   }
@@ -183,9 +205,12 @@ class BrowserProvider implements ComputerProvider {
 
     try {
       await waitForCdp(port, child);
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, {
-        timeout: 10_000,
-      });
+      const browser = await chromium.connectOverCDP(
+        `http://127.0.0.1:${port}`,
+        {
+          timeout: browserConnectTimeoutMs(),
+        },
+      );
       const context = browser.contexts()[0];
       if (!context) throw new Error("Chrome started, but no default browser context was available.");
 

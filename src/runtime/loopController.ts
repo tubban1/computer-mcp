@@ -22,6 +22,7 @@ import {
   type LoopPhase,
   type PersistentLoop,
 } from "./loopStore.js";
+import { runtimeLifecycle } from "./runtimeLifecycle.js";
 
 type CreateLoopInput = {
   label: string;
@@ -520,6 +521,9 @@ function controllerPollMs(): number {
 }
 
 export async function runLoopControllerTick(nowMs = Date.now()) {
+  if (runtimeLifecycle.isDraining()) {
+    return { skipped: true, reason: "runtime_draining" };
+  }
   if (tickRunning) return { skipped: true, reason: "tick_already_running" };
   tickRunning = true;
   try {

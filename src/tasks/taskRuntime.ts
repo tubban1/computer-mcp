@@ -22,6 +22,7 @@ import {
   withChildExecutionContext,
 } from "../runtime/executionContext.js";
 import { releaseWorkspaceLeasesForTask } from "../runtime/workspaceLeaseManager.js";
+import { runtimeLifecycle } from "../runtime/runtimeLifecycle.js";
 import {
   appendTaskEvent,
   deletePersistentTaskRecord,
@@ -719,6 +720,19 @@ export async function runPersistentTask(
     10 * 60_000,
   );
 
+  const taskLifecycleMutation = runtimeLifecycle.beginMutation(
+    `task:${id}`,
+    {
+      context: {
+        ...currentExecutionContext(),
+        sessionId:
+          task.ownerSessionId ?? currentExecutionContext().sessionId,
+        taskId: task.id,
+        origin: "task",
+      },
+    },
+  );
+
   activeRuns.add(id);
   controlSignals.delete(id);
 
@@ -1114,5 +1128,6 @@ export async function runPersistentTask(
   } finally {
     activeRuns.delete(id);
     controlSignals.delete(id);
+    runtimeLifecycle.endMutation(taskLifecycleMutation.id);
   }
 }

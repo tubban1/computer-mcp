@@ -16,6 +16,7 @@ import {
   type ScheduleStopWhen,
   type ScheduleTrigger,
 } from "./schedulerStore.js";
+import { runtimeLifecycle } from "./runtimeLifecycle.js";
 
 type CreateScheduleInput = {
   label: string;
@@ -411,6 +412,9 @@ function schedulerPollMs(): number {
 }
 
 export async function runSchedulerTick(nowMs = Date.now()) {
+  if (runtimeLifecycle.isDraining()) {
+    return { skipped: true, reason: "runtime_draining" };
+  }
   if (tickRunning) return { skipped: true, reason: "tick_already_running" };
   tickRunning = true;
   try {

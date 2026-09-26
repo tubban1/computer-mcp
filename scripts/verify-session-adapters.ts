@@ -7,8 +7,50 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = path.join(root, ".tmp-verify-session-adapters");
 
+async function findChromeForTesting(): Promise<string | undefined> {
+  const home = process.env.HOME;
+  if (!home) return undefined;
+  const browsersRoot = path.join(home, ".agent-browser", "browsers");
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(browsersRoot);
+  } catch {
+    return undefined;
+  }
+
+  for (const entry of entries
+    .filter((name) => name.startsWith("chrome-"))
+    .sort()
+    .reverse()) {
+    const executable = path.join(
+      browsersRoot,
+      entry,
+      "Google Chrome for Testing.app",
+      "Contents",
+      "MacOS",
+      "Google Chrome for Testing",
+    );
+    try {
+      await fs.access(executable);
+      return executable;
+    } catch {
+      // Keep looking.
+    }
+  }
+  return undefined;
+}
+
+const isolatedBrowserExecutable = await findChromeForTesting();
+
 process.env.ALLOW_BROWSER = "true";
 process.env.BROWSER_HEADLESS = "true";
+process.env.BROWSER_STARTUP_TIMEOUT_MS = "60000";
+process.env.BROWSER_CONNECT_TIMEOUT_MS = "60000";
+if (isolatedBrowserExecutable) {
+  process.env.BROWSER_EXECUTABLE = isolatedBrowserExecutable;
+} else {
+  delete process.env.BROWSER_EXECUTABLE;
+}
 process.env.BROWSER_PROFILE_DIR = path.join(scratch, "browser-profile");
 process.env.SESSION_ADAPTER_DIR = path.join(scratch, "sessions");
 process.env.SESSION_ADAPTER_KEY_PATH = path.join(scratch, "session.key");

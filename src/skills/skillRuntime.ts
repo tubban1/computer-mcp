@@ -64,6 +64,8 @@ import {
 } from "../runtime/sessionAdapters.js";
 import type { SessionAdapterId } from "../runtime/sessionStore.js";
 import { getRuntimeIdentity } from "../runtime/runtimeIdentity.js";
+import { runtimeLifecycle } from "../runtime/runtimeLifecycle.js";
+import { currentExecutionContext } from "../runtime/executionContext.js";
 import {
   embedTexts,
   getEmbeddingProviderStatus,
@@ -73,6 +75,7 @@ import {
   getWorkspaceLeaseStorageInfo,
   listWorkspaceLeases,
   releaseWorkspaceLease,
+  waitForWorkspaceAvailable,
   workspaceLeaseStatus,
 } from "../runtime/workspaceLeaseManager.js";
 import {
@@ -80,6 +83,15 @@ import {
   getProcessOutput,
   listProcesses,
 } from "../tools/shellOps.js";
+import {
+  approveWorkspaceHandoff,
+  cancelWorkspaceHandoff,
+  completeWorkspaceTakeover,
+  getWorkspaceHandoffStorageInfo,
+  listWorkspaceHandoffs,
+  readWorkspaceHandoff,
+  requestWorkspaceTakeover,
+} from "../runtime/workspaceHandoffStore.js";
 import {
   bindWeChatSession,
   captureLatestWeChatReply,
@@ -215,6 +227,18 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     },
   },
   "runtime.embedding": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.control": {
     skillVersion: "0.1.0",
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
@@ -379,6 +403,127 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
 
 const sleep = async (ms: number) =>
   await new Promise((resolve) => setTimeout(resolve, ms));
+
+async function runtimeDrainSnapshot() {
+  const lifecycle = runtimeLifecycle.status();
+  const processes = await listProcesses();
+  const runningWriteProcesses = processes
+    .filter(
+      (process) =>
+        process.running === true && process.workspaceMode === "write",
+    )
+    .map((process) => ({
+      processId: process.processId,
+      pid: process.pid,
+      command: process.command,
+      workspace: process.workspace,
+      ownerSessionId: process.ownerSessionId,
+      ownerTaskId: process.ownerTaskId ?? null,
+      startedAt: process.startedAt,
+    }));
+
+  return {
+    lifecycle,
+    runningWriteProcesses,
+    drained:
+      lifecycle.activeMutationCount === 0 &&
+      runningWriteProcesses.length === 0,
+  };
+}
+
+async function waitForRuntimeDrain(timeoutMs: number) {
+  const bounded = Math.min(Math.max(Math.trunc(timeoutMs), 0), 600_000);
+  const startedAt = Date.now();
+
+  while (true) {
+    const snapshot = await runtimeDrainSnapshot();
+    if (snapshot.drained) {
+      return {
+        ...snapshot,
+        timedOut: false,
+        waitedMs: Date.now() - startedAt,
+      };
+    }
+    if (Date.now() - startedAt >= bounded) {
+      return {
+        ...snapshot,
+        timedOut: true,
+        waitedMs: Date.now() - startedAt,
+      };
+    }
+    await sleep(100);
+  }
+}
+
+function skillOperation(args: JsonObject): string {
+  return typeof args.op === "string"
+    ? args.op.trim().toLowerCase()
+    : "";
+}
+
+function skillIsReadOnlyForLifecycle(
+  skillId: string,
+  args: JsonObject,
+): boolean {
+  const operation = skillOperation(args);
+  if (skillId === "runtime.control") return true;
+  if (
+    skillId === "runtime.workspace" &&
+    [
+      "status",
+      "list",
+      "wait",
+      "list_handoffs",
+      "handoff_status",
+    ].includes(operation || "status")
+  ) {
+    return true;
+  }
+  if (
+    skillId === "runtime.process" &&
+    ["list", "status"].includes(operation || "list")
+  ) {
+    return true;
+  }
+  if (
+    skillId === "runtime.embedding" &&
+    (operation || "status") === "status"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function skillAllowedDuringDrain(
+  skillId: string,
+  args: JsonObject,
+): boolean {
+  if (skillId === "runtime.control") return true;
+  const operation = skillOperation(args);
+  if (
+    skillId === "runtime.workspace" &&
+    [
+      "status",
+      "list",
+      "wait",
+      "release",
+      "list_handoffs",
+      "handoff_status",
+      "request_takeover",
+      "handoff",
+      "cancel_takeover",
+    ].includes(operation || "status")
+  ) {
+    return true;
+  }
+  if (
+    skillId === "runtime.process" &&
+    ["list", "status", "claim"].includes(operation || "list")
+  ) {
+    return true;
+  }
+  return Boolean(currentExecutionContext().taskId);
+}
 
 function requiredText(args: JsonObject, key: string): string {
   const value = args[key];
@@ -809,6 +954,15 @@ const EMBEDDING_CONTRACT: SkillContract = {
   sideEffects: ["optional_external_embedding_request"],
   requiresVerification: false,
   retryPolicy: "automatic",
+  resources: [],
+};
+
+const CONTROL_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: ["runtime_lifecycle_transition"],
+  requiresVerification: true,
+  retryPolicy: "manual",
   resources: [],
 };
 
@@ -1580,6 +1734,65 @@ const skills: SkillDefinition[] = [
     },
   },
   {
+    id: "runtime.control",
+    domain: "runtime",
+    description:
+      "Inspect or control the Runtime lifecycle for graceful drain, upgrade preparation, and safe resume.",
+    keywords: [
+      "drain",
+      "graceful shutdown",
+      "runtime control",
+      "upgrade",
+      "resume",
+      "排空",
+      "优雅停机",
+      "升级",
+    ],
+    contract: CONTROL_CONTRACT,
+    inputs: {
+      op: "status | drain | wait | resume. Default: status.",
+      reason: "Optional human-readable drain reason.",
+      timeout_ms:
+        "For wait: maximum time to wait for active mutations/write processes to clear; default 60000, max 600000.",
+    },
+    dryRunPlan: (args) => ({
+      op: args.op ?? "status",
+      graceful: true,
+      blocksNewSideEffectsWhenDraining: true,
+      schedulerAndLoopPauseNewRuns: true,
+      longRunningWriteProcessesRemainBlockers: true,
+    }),
+    run: async (args) => {
+      const operation = skillOperation(args) || "status";
+
+      if (operation === "status") {
+        return await runtimeDrainSnapshot();
+      }
+      if (operation === "drain") {
+        runtimeLifecycle.requestDrain({
+          reason:
+            typeof args.reason === "string" && args.reason.trim()
+              ? args.reason.trim()
+              : undefined,
+        });
+        return await runtimeDrainSnapshot();
+      }
+      if (operation === "wait") {
+        return await waitForRuntimeDrain(
+          typeof args.timeout_ms === "number" ? args.timeout_ms : 60_000,
+        );
+      }
+      if (operation === "resume") {
+        runtimeLifecycle.resume();
+        return await runtimeDrainSnapshot();
+      }
+
+      throw new Error(
+        'runtime.control op must be "status", "drain", "wait", or "resume".',
+      );
+    },
+  },
+  {
     id: "runtime.workspace",
     domain: "runtime",
     description:
@@ -1598,15 +1811,19 @@ const skills: SkillDefinition[] = [
     contract: WORKSPACE_CONTRACT,
     inputs: {
       op:
-        "status | list | acquire | renew | release. Default: status.",
+        "status | list | wait | acquire | renew | release | request_takeover | handoff | takeover | list_handoffs | handoff_status | cancel_takeover. Default: status.",
       workspace:
-        "Path anywhere inside the repository/workspace. Required except for list.",
+        "Path anywhere inside the repository/workspace. Required for workspace operations.",
       purpose:
-        "Optional human-readable reason for acquire/renew ownership.",
+        "Optional human-readable reason for acquire/renew/takeover ownership.",
       ttl_ms:
         "Optional lease TTL in milliseconds; minimum 10000, maximum 24 hours.",
       wait_ms:
         "Optional time to wait for current writer to release; default 0, maximum 10 minutes.",
+      request_id:
+        "Durable workspace handoff request id for handoff/takeover/status/cancel.",
+      confirm:
+        "Must be true for handoff or takeover; ownership is never silently stolen.",
     },
     dryRunPlan: (args) => ({
       op: args.op ?? "status",
@@ -1614,9 +1831,14 @@ const skills: SkillDefinition[] = [
       semantics: {
         durableWriteOwnership: true,
         readsMayContinueWhileWriteOwned: true,
-        takeover: "deferred_to_drain_protocol",
+        takeover:
+          "request_takeover -> handoff(confirm) -> takeover(confirm)",
+        silentLeaseStealing: false,
       },
-      storage: getWorkspaceLeaseStorageInfo(),
+      storage: {
+        leases: getWorkspaceLeaseStorageInfo(),
+        handoffs: getWorkspaceHandoffStorageInfo(),
+      },
     }),
     run: async (args) => {
       const operation =
@@ -1628,11 +1850,36 @@ const skills: SkillDefinition[] = [
           storage: getWorkspaceLeaseStorageInfo(),
         };
       }
+      if (operation === "list_handoffs") {
+        return {
+          handoffs: await listWorkspaceHandoffs(),
+          storage: getWorkspaceHandoffStorageInfo(),
+        };
+      }
+      if (operation === "handoff_status") {
+        return await readWorkspaceHandoff(
+          requiredText(args, "request_id"),
+        );
+      }
+      if (operation === "cancel_takeover") {
+        return await cancelWorkspaceHandoff(
+          requiredText(args, "request_id"),
+        );
+      }
 
       const workspace = requiredText(args, "workspace");
 
       if (operation === "status") {
         return await workspaceLeaseStatus(workspace);
+      }
+
+      if (operation === "wait") {
+        return await waitForWorkspaceAvailable(workspace, {
+          timeoutMs:
+            typeof args.wait_ms === "number"
+              ? Math.min(Math.max(Math.trunc(args.wait_ms), 0), 600_000)
+              : 60_000,
+        });
       }
 
       if (operation === "acquire" || operation === "renew") {
@@ -1656,9 +1903,41 @@ const skills: SkillDefinition[] = [
       if (operation === "release") {
         return await releaseWorkspaceLease(workspace);
       }
+      if (operation === "request_takeover") {
+        return await requestWorkspaceTakeover(
+          workspace,
+          typeof args.purpose === "string" ? args.purpose : undefined,
+        );
+      }
+      if (operation === "handoff") {
+        const requestId = requiredText(args, "request_id");
+        const record = await readWorkspaceHandoff(requestId);
+        if (record.workspace !== (await workspaceLeaseStatus(workspace)).workspace) {
+          throw new Error(
+            "HANDOFF_WORKSPACE_MISMATCH: request_id does not belong to this workspace.",
+          );
+        }
+        return await approveWorkspaceHandoff(
+          requestId,
+          optionalBoolean(args, "confirm", false),
+        );
+      }
+      if (operation === "takeover") {
+        const requestId = requiredText(args, "request_id");
+        const record = await readWorkspaceHandoff(requestId);
+        if (record.workspace !== (await workspaceLeaseStatus(workspace)).workspace) {
+          throw new Error(
+            "HANDOFF_WORKSPACE_MISMATCH: request_id does not belong to this workspace.",
+          );
+        }
+        return await completeWorkspaceTakeover(
+          requestId,
+          optionalBoolean(args, "confirm", false),
+        );
+      }
 
       throw new Error(
-        'runtime.workspace op must be "status", "list", "acquire", "renew", or "release".',
+        'runtime.workspace op must be "status", "list", "wait", "acquire", "renew", "release", "request_takeover", "handoff", "takeover", "list_handoffs", "handoff_status", or "cancel_takeover".',
       );
     },
   },
@@ -2857,15 +3136,31 @@ export async function executeSkill(
   }
 
   const startedAt = Date.now();
-  const result = await skill.run(args);
-  return {
-    skill: skill.id,
-    domain: skill.domain,
-    runtime: runtimeMetadata,
-    contract: skill.contract,
-    durationMs: Date.now() - startedAt,
-    result,
-  };
+  const lifecycleMutation =
+    skill.contract.sideEffects.length > 0 &&
+    !skillIsReadOnlyForLifecycle(skill.id, args) &&
+    skill.id !== "runtime.control"
+      ? runtimeLifecycle.beginMutation(`skill:${skill.id}`, {
+          context: currentExecutionContext(),
+          allowDuringDrain: skillAllowedDuringDrain(skill.id, args),
+        })
+      : null;
+
+  try {
+    const result = await skill.run(args);
+    return {
+      skill: skill.id,
+      domain: skill.domain,
+      runtime: runtimeMetadata,
+      contract: skill.contract,
+      durationMs: Date.now() - startedAt,
+      result,
+    };
+  } finally {
+    if (lifecycleMutation) {
+      runtimeLifecycle.endMutation(lifecycleMutation.id);
+    }
+  }
 }
 
 function skillScore(goal: string, skill: SkillDefinition): number {

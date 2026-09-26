@@ -24,6 +24,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] WeChat-session verifier
 - [ ] macOS Helper verifier
 - [ ] Concurrency verifier
+- [ ] Drain/handoff verifier
 - [ ] Production Runtime verifier
 
 ## Production

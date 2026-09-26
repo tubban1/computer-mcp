@@ -324,6 +324,55 @@ export async function assertWorkspaceWriteAllowed(
   });
 }
 
+export async function waitForWorkspaceAvailable(
+  workspaceInput: string,
+  options?: {
+    timeoutMs?: number;
+    pollMs?: number;
+    context?: ExecutionContext;
+  },
+): Promise<{
+  available: boolean;
+  timedOut: boolean;
+  waitedMs: number;
+  workspace: string;
+  lease: WorkspaceLeaseRecord | null;
+}> {
+  const context = contextWithFallback(options?.context);
+  const timeoutMs = Math.min(
+    Math.max(Math.trunc(options?.timeoutMs ?? 60_000), 0),
+    10 * 60_000,
+  );
+  const pollMs = Math.min(
+    Math.max(Math.trunc(options?.pollMs ?? 100), 20),
+    2_000,
+  );
+  const startedAt = Date.now();
+
+  while (true) {
+    const status = await workspaceLeaseStatus(workspaceInput);
+    if (!status.lease || ownerMatches(status.lease, context)) {
+      return {
+        available: true,
+        timedOut: false,
+        waitedMs: Date.now() - startedAt,
+        workspace: status.workspace,
+        lease: status.lease,
+      };
+    }
+    if (Date.now() - startedAt >= timeoutMs) {
+      return {
+        available: false,
+        timedOut: true,
+        waitedMs: Date.now() - startedAt,
+        workspace: status.workspace,
+        lease: status.lease,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 export async function workspaceLeaseStatus(
   workspaceInput: string,
 ): Promise<{

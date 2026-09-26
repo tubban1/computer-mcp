@@ -367,3 +367,36 @@ Verification:
 npm run verify:concurrency
 npm run verify:production-runtime
 ```
+
+
+### v0.9.12 — Graceful Drain, Wait & Explicit Workspace Handoff
+
+v0.9.12 adds a Runtime lifecycle foundation for safe maintenance and future zero/low-downtime upgrades.
+
+The Runtime can enter a `DRAINING` state through `runtime.control`. While draining, new side-effecting ad-hoc work is rejected, new Persistent Task runs are not admitted, and Scheduler/Loop ticks stop launching new work. Work already admitted before the drain request can finish its current safe run boundary.
+
+`runtime.control wait` waits for active mutation scopes and managed write processes to clear; `resume` reopens mutation admission.
+
+Workspace coordination is extended with `runtime.workspace wait` and an explicit ownership-transfer protocol:
+
+```text
+request_takeover
+      ↓
+handoff(confirm=true)
+      ↓
+takeover(confirm=true)
+```
+
+A takeover request records the original lease ID and owner. Handoff fails if ownership changed in the meantime or if managed processes still pin the lease. Ownership is never silently stolen by the normal protocol.
+
+Durable handoff receipts are stored separately from workspace leases so the transfer remains reviewable.
+
+See [Graceful drain and workspace handoff](../operations/graceful-drain-and-handoff.md) and [ADR-0005](../adr/0005-graceful-drain-handoff.md).
+
+Verification:
+
+```bash
+npm run verify:drain-handoff
+```
+
+This is the foundation for the next upgrade-coordinator work: candidate Runtime startup, compatibility validation, old-Runtime drain, routing switch, shutdown, and rollback integration.

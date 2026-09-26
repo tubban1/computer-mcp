@@ -35,6 +35,17 @@ AGENTOS_WAKE_NAME=Jarvis
 AGENTOS_ALIASES=AgentOS,OWL,Jarvis
 ```
 
+## Browser startup
+
+Chrome startup can vary significantly by macOS/Chrome version and machine load. The Runtime waits up to 60 seconds for the local DevTools endpoint by default. Override with:
+
+```text
+BROWSER_STARTUP_TIMEOUT_MS=60000
+BROWSER_CONNECT_TIMEOUT_MS=30000
+```
+
+The startup timeout covers waiting for Chrome's local DevTools endpoint. The connect timeout covers Playwright's subsequent CDP/WebSocket handshake. Both values are bounded between 5 and 120 seconds.
+
 ## Embeddings
 
 See [Embedding Provider Contract](../specifications/embedding-provider.md). Remote endpoints require explicit remote opt-in.

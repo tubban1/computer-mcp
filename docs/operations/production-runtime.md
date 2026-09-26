@@ -1,6 +1,6 @@
 # Production Runtime
 
-AgentOS Runtime v0.9.11 separates the **development source tree** from the **production Runtime**.
+AgentOS Runtime separates the **development source tree** from the **production Runtime**.
 
 The production service runs compiled JavaScript from an immutable release directory. It does not run `tsx watch src/server.ts`.
 
@@ -120,7 +120,7 @@ A healthy production response should report:
 ```json
 {
   "ok": true,
-  "version": "0.9.11",
+  "version": "0.9.12",
   "runtime": {
     "mode": "production"
   }
@@ -178,7 +178,7 @@ The verifier builds the project, starts `dist/server.js` on an isolated port/sta
 
 - production mode
 - isolated state root
-- expected v0.9.11 health version
+- expected current release health version
 - session-aware concurrency capabilities
 - workspace leases
 - persistent process ownership

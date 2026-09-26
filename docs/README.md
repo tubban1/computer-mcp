@@ -46,6 +46,7 @@ Contracts intended to remain stable across implementations.
 ## Operations
 
 - [Production Runtime](operations/production-runtime.md)
+- [Graceful drain and workspace handoff](operations/graceful-drain-and-handoff.md)
 - [Configuration](operations/configuration.md)
 - [Recovery](operations/recovery.md)
 - [Troubleshooting](operations/troubleshooting.md)
@@ -71,6 +72,7 @@ ADRs explain why important design choices were made, not just what the current c
 - [ADR-0002: Memory model](adr/0002-memory-model.md)
 - [ADR-0003: Durable workspace ownership](adr/0003-workspace-ownership.md)
 - [ADR-0004: Immutable production Runtime](adr/0004-production-runtime.md)
+- [ADR-0005: Graceful drain and explicit handoff](adr/0005-graceful-drain-handoff.md)
 
 ## Archive
 

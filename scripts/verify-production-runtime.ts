@@ -92,7 +92,7 @@ try {
 
   assert.equal(health.ok, true);
   assert.equal(health.service, "computer-mcp");
-  assert.equal(health.version, "0.9.11");
+  assert.equal(health.version, "0.9.12");
   assert.equal(health.runtime?.mode, "production");
   assert.equal(path.resolve(health.runtime?.stateRoot), path.resolve(stateRoot));
   assert.equal(path.resolve(health.runtime?.codeRoot), path.resolve(root));
@@ -101,8 +101,10 @@ try {
   assert.equal(health.capabilities?.persistentProcessOwnership, true);
   assert.equal(health.capabilities?.productionRuntimeIsolation, true);
   assert.equal(health.capabilities?.runtimeSelfProtection, true);
+  assert.equal(health.capabilities?.gracefulDrain, true);
+  assert.equal(health.capabilities?.workspaceHandoff, true);
 
-  assert.match(stdout, /computer-mcp v0\.9\.11 listening/);
+  assert.match(stdout, /computer-mcp v0\.9\.12 listening/);
   assert.doesNotMatch(stdout, /tsx watch/);
 
   console.log(
