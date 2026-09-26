@@ -29,6 +29,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] State schema verifier
 - [ ] Fault recovery verifier
 - [ ] Recovery matrix verifier
+- [ ] Soak smoke profile
 - [ ] Production Runtime verifier
 
 ## Production

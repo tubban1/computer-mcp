@@ -244,7 +244,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.15",
+    version: "0.9.16",
   });
 
   server.tool(
@@ -926,7 +926,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.15",
+          version: "0.9.16",
           identity: getRuntimeIdentity(),
           runtime: {
             ...runtimePathStatus(),
@@ -978,7 +978,9 @@ function createServer() {
           versionedStateSchema: true,
           stateMigrationRegistry: true,
           crashRecoveryMatrix: true,
+          multiAgentSoakHarness: true,
           sameRuntimeDisconnectedSessionReclamation: true,
+          sameRuntimeIdleSessionReclamation: true,
           workspaceLeases: true,
           persistentProcessOwnership: true,
           productionRuntimeIsolation: true,
@@ -2174,7 +2176,7 @@ app.get("/health", async (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.15",
+    version: "0.9.16",
     identity: getRuntimeIdentity(),
     runtime: {
       ...runtimePathStatus(),
@@ -2226,7 +2228,9 @@ app.get("/health", async (_req, res) => {
       versionedStateSchema: true,
       stateMigrationRegistry: true,
       crashRecoveryMatrix: true,
+      multiAgentSoakHarness: true,
       sameRuntimeDisconnectedSessionReclamation: true,
+      sameRuntimeIdleSessionReclamation: true,
       workspaceLeases: true,
       persistentProcessOwnership: true,
       productionRuntimeIsolation: true,
@@ -2249,7 +2253,7 @@ if (candidateMode) {
       `AgentOS candidate preflight mode: background controllers disabled.`,
     );
     console.log(
-      `computer-mcp v0.9.15 candidate listening on http://127.0.0.1:${port}/mcp`,
+      `computer-mcp v0.9.16 candidate listening on http://127.0.0.1:${port}/mcp`,
     );
   });
 } else {
@@ -2261,6 +2265,6 @@ if (candidateMode) {
     console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
     console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
     console.log(`AgentOS process monitor poll=${processMonitor.pollMs}ms`);
-    console.log(`computer-mcp v0.9.15 listening on http://127.0.0.1:${port}/mcp`);
+    console.log(`computer-mcp v0.9.16 listening on http://127.0.0.1:${port}/mcp`);
   });
 }

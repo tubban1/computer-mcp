@@ -55,3 +55,19 @@ See [Embedding Provider Contract](../specifications/embedding-provider.md). Remo
 Do not run production through `tsx watch`. Use [Production Runtime](production-runtime.md).
 
 For an existing v0.9.12+ production installation, use the [Production upgrade protocol](production-upgrades.md). The coordinator defaults to a 120-second graceful drain timeout; override it with `AGENTOS_UPGRADE_DRAIN_TIMEOUT_MS` when long-running write processes legitimately need more time. v0.9.14+ also validates the [Runtime Durable State Schema](../specifications/state-schema.md) before cutover.
+
+
+## Workspace session-lease recovery
+
+MCP transport sessions are not durable workflow identities. Session-only workspace leases can be reclaimed when the owning transport disconnects and, as a conservative fallback, after an apparently active session remains idle.
+
+Defaults:
+
+```text
+WORKSPACE_SESSION_RECLAIM_GRACE_MS=5000
+WORKSPACE_SESSION_IDLE_RECLAIM_MS=900000
+```
+
+The idle fallback applies only to session-only leases with no durable Task owner and no pinned managed process. Task-, Process-, and Transaction-owned leases are not reclaimed merely because the MCP transport is idle.
+
+For work that spans many tool calls, prefer durable Task/Process/Transaction ownership rather than increasing reliance on a raw session lease.

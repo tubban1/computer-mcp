@@ -515,3 +515,43 @@ npm run verify:recovery-matrix
 See [Fault recovery matrix](../operations/fault-recovery.md) and [ADR-0008](../adr/0008-durable-side-effect-replay.md).
 
 The Primitive ABI remains unchanged; these changes live in Runtime durability/orchestration and provider-side mutation semantics.
+
+
+### v0.9.16 — Multi-Agent Soak Harness & Stale Session Lease Recovery
+
+v0.9.16 turns long-duration concurrency testing into a repeatable Runtime release gate.
+
+The soak harness exercises multiple independent MCP execution contexts, deliberate same-workspace contention, Persistent Scheduler, Persistent Loop Controller, managed processes, browser Session Adapter fixtures, and WeChat Session Adapter fixtures inside an isolated test state root.
+
+The harness separates independent foreground repositories from Scheduler/Loop repositories so expected background ownership contention does not contaminate the independent-concurrency signal.
+
+It records periodic heartbeats and final machine-readable reports with:
+
+- independent action success/error counts
+- resource wait max/p95
+- same-workspace contention rejection counts
+- Scheduler and Loop exactly-once side-effect counts
+- durable Task IDs and terminal-state checks
+- managed-process leak checks
+- workspace-lease leak checks
+- adapter fixture health
+- event-loop lag max/p95
+- RSS growth
+
+Named profiles are provided for smoke, 2-hour, 6-hour, and 24-hour runs. A profile only counts as a release-gate pass after a real completed report returns `success=true`.
+
+v0.9.16 also hardens session-only workspace ownership for ChatGPT stream/network recovery. An MCP transport can remain apparently active even after the visible conversation has moved to a replacement transport. Session-only leases with no Task owner and no pinned managed process can therefore be reclaimed after a conservative active-but-idle timeout, in addition to known-disconnected-session reclamation.
+
+This does **not** weaken Task-, Process-, or Transaction-scoped ownership. Long-lived work should continue to use those stable durable owner identities rather than a raw MCP transport session.
+
+Verification and long-run commands:
+
+```bash
+npm run soak:smoke
+npm run soak:2h
+npm run soak:6h
+npm run soak:24h
+npm run soak:status
+```
+
+See [Multi-agent soak testing](../operations/soak-testing.md) and [Concurrency and workspace ownership](concurrency-and-ownership.md).

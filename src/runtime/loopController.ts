@@ -615,6 +615,13 @@ export function startPersistentLoopController() {
   return { started: true, pollMs };
 }
 
+export function stopPersistentLoopController() {
+  if (!loopTimer) return { stopped: false };
+  clearInterval(loopTimer);
+  loopTimer = undefined;
+  return { stopped: true };
+}
+
 export async function listPersistentLoops() {
   return (await listLoopRecords()).map(summarize);
 }

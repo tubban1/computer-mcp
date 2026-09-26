@@ -49,6 +49,7 @@ Contracts intended to remain stable across implementations.
 - [Production Runtime](operations/production-runtime.md)
 - [Production upgrades](operations/production-upgrades.md)
 - [Graceful drain and workspace handoff](operations/graceful-drain-and-handoff.md)
+- [Multi-agent soak testing](operations/soak-testing.md)
 - [Configuration](operations/configuration.md)
 - [Recovery](operations/recovery.md)
 - [Fault recovery matrix](operations/fault-recovery.md)

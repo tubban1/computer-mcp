@@ -85,9 +85,15 @@ const sessionC = {
   requestId: "request-C",
   origin: "mcp" as const,
 };
+const sessionD = {
+  sessionId: "session-concurrency-D",
+  requestId: "request-D",
+  origin: "mcp" as const,
+};
 runtimeSessionManager.register(sessionA.sessionId);
 runtimeSessionManager.register(sessionB.sessionId);
 runtimeSessionManager.register(sessionC.sessionId);
+runtimeSessionManager.register(sessionD.sessionId);
 
 const fileA = path.join(repoA, "a.txt");
 const fileB = path.join(repoB, "b.txt");
@@ -325,6 +331,28 @@ try {
     await releaseWorkspaceLease(repoB),
   );
 
+  // Chat stream recovery can leave a transport session looking active even
+  // though it never makes another call. Session-only leases are reclaimable
+  // after a conservative idle timeout. The verifier sets that timeout to zero
+  // only for this isolated test.
+  process.env.WORKSPACE_SESSION_IDLE_RECLAIM_MS = "0";
+  const idleLease = await withExecutionContext(sessionD, async () =>
+    await ensureWorkspaceWriteLease(repoB, {
+      purpose: "same-runtime stale active session lease",
+    }),
+  );
+  assert.equal(idleLease.ownerSessionId, sessionD.sessionId);
+  const idleReclaimed = await withExecutionContext(sessionB, async () =>
+    await ensureWorkspaceWriteLease(repoB, {
+      purpose: "reclaimed after stale active transport",
+    }),
+  );
+  assert.equal(idleReclaimed.ownerSessionId, sessionB.sessionId);
+  await withExecutionContext(sessionB, async () =>
+    await releaseWorkspaceLease(repoB),
+  );
+  delete process.env.WORKSPACE_SESSION_IDLE_RECLAIM_MS;
+
   // batch_edit_files composes multiple edits against the same in-memory file.
   await fs.writeFile(batchFile, "alpha beta gamma\n");
   const batch = await batchEditFiles([
@@ -388,6 +416,7 @@ try {
         processExitReleasesLease: true,
         orphanSessionLeaseReclamation: true,
         sameRuntimeDisconnectedSessionReclamation: true,
+        staleActiveSessionReclamation: true,
         transactionOwnershipTransportIndependent: true,
         sameFileBatchEditsCompose: true,
         runtimeSelfProductionGuard: true,

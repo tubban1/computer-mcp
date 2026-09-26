@@ -150,3 +150,30 @@ The verifier covers:
 - transaction ownership survives transport changes
 - multiple edits to the same file compose in order
 - production Runtime self-mutation is blocked
+
+
+## Transport-session churn and interactive leases
+
+A visible ChatGPT conversation may survive while its underlying MCP transport session rotates because of reconnects, stream recovery, or client-side network faults.
+
+That has an important consequence:
+
+- a raw `session:<mcp-session-id>` is suitable for short-lived audit/control attribution
+- it is **not** a stable durable identity for a long interactive workflow
+
+For this reason, AgentOS prefers Task-, Process-, and Transaction-scoped ownership for work that spans multiple tool calls.
+
+Session-only leases support two recovery paths when they have no Task owner and no pinned process:
+
+1. reclaim after the Runtime knows the owning MCP session disconnected
+2. conservative reclaim after the owning session remains active-but-idle beyond the configured timeout
+
+The same-Runtime idle timeout defaults to 15 minutes and can be configured with:
+
+```text
+WORKSPACE_SESSION_IDLE_RECLAIM_MS
+```
+
+This timeout is intentionally conservative. It is a safety valve for stale transport state, not a substitute for durable Task ownership.
+
+A stream-recovery incident should therefore not be solved by silently stealing a Task/Process/Transaction lease. Only disposable session-only ownership is eligible for idle reclamation.

@@ -24,6 +24,10 @@ Another durable Task, Process, Transaction, or explicit lease owns an overlappin
 
 Inspect with `runtime.workspace status/list`. Prefer wait/handoff rather than forcing release unless you have verified the owner is stale.
 
+If the owner is a raw `session:...` from the same visible ChatGPT conversation after a stream/network recovery, the MCP transport may have rotated. Session-only leases with no Task owner and no pinned process are reclaimable after disconnect, and stale active-but-idle sessions have a conservative timeout. Long interactive work should be promoted to durable Task/Process/Transaction ownership rather than relying on a raw transport session.
+
+Do not use force release on Task-, Process-, or Transaction-owned leases merely because the chat UI reconnected.
+
 ## PROCESS_NOT_ORPHANED
 
 A process claim was attempted while the original owner is still active. Claim is only for recovered/disconnected ownership cases.
