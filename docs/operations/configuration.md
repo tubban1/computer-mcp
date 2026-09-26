@@ -53,3 +53,5 @@ See [Embedding Provider Contract](../specifications/embedding-provider.md). Remo
 ## Production
 
 Do not run production through `tsx watch`. Use [Production Runtime](production-runtime.md).
+
+For an existing v0.9.12+ production installation, use the [Production upgrade protocol](production-upgrades.md). The coordinator defaults to a 120-second graceful drain timeout; override it with `AGENTOS_UPGRADE_DRAIN_TIMEOUT_MS` when long-running write processes legitimately need more time.

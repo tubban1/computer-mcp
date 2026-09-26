@@ -18,3 +18,4 @@ Current ADRs:
 - [0003 — Durable workspace ownership](0003-workspace-ownership.md)
 - [0004 — Immutable production Runtime](0004-production-runtime.md)
 - [0005 — Graceful drain and explicit handoff](0005-graceful-drain-handoff.md)
+- [0006 — Production upgrade protocol](0006-production-upgrade-protocol.md)

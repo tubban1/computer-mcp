@@ -25,6 +25,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] macOS Helper verifier
 - [ ] Concurrency verifier
 - [ ] Drain/handoff verifier
+- [ ] Upgrade Runtime verifier
 - [ ] Production Runtime verifier
 
 ## Production

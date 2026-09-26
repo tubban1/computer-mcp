@@ -24,7 +24,7 @@ Production Runtime: [`docs/operations/production-runtime.md`](docs/operations/pr
 
 ### Running Jarvis
 
-For normal daily use, install Production once with `npm run install:production`; launchd then starts Jarvis automatically. Do **not** run `npm run dev` for normal use. `npm run dev` is only for AgentOS source development and now defaults to port `8788` with `~/.computer-mcp-dev`, while Production normally uses port `8787` with `~/.computer-mcp`.
+For normal daily use, install Production once with `npm run install:production`; launchd then starts Jarvis automatically. For later verified releases, use `npm run upgrade:production` so the new candidate is preflighted and the old Runtime is gracefully drained before cutover. Do **not** run `npm run dev` for normal use. `npm run dev` is only for AgentOS source development and defaults to port `8788` with `~/.computer-mcp-dev`, while Production normally uses port `8787` with `~/.computer-mcp`.
 
 ## v0.9 — Primitive & Skill Runtime
 

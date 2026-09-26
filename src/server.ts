@@ -96,7 +96,10 @@ import {
 } from "./runtime/runtimeIdentity.js";
 import { withExecutionContext } from "./runtime/executionContext.js";
 import { runtimeSessionManager } from "./runtime/runtimeSessionManager.js";
-import { runtimePathStatus } from "./runtime/runtimePaths.js";
+import {
+  runtimeCandidateMode,
+  runtimePathStatus,
+} from "./runtime/runtimePaths.js";
 import { runtimeLifecycle } from "./runtime/runtimeLifecycle.js";
 import { releaseWorkspaceLeasesForSession } from "./runtime/workspaceLeaseManager.js";
 
@@ -237,7 +240,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.12",
+    version: "0.9.13",
   });
 
   server.tool(
@@ -919,7 +922,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.12",
+          version: "0.9.13",
           identity: getRuntimeIdentity(),
           runtime: {
             ...runtimePathStatus(),
@@ -966,6 +969,7 @@ function createServer() {
           sessionAwareConcurrency: true,
           gracefulDrain: true,
           workspaceHandoff: true,
+          upgradeCandidateMode: true,
           workspaceLeases: true,
           persistentProcessOwnership: true,
           productionRuntimeIsolation: true,
@@ -2040,6 +2044,14 @@ function createServer() {
 const app = express();
 app.use(express.json({ limit: "4mb" }));
 
+const candidateMode = runtimeCandidateMode();
+if (candidateMode) {
+  runtimeLifecycle.requestDrain({
+    reason: "candidate_preflight",
+    requestedBy: "runtime:candidate",
+  });
+}
+
 const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
 
 app.all("/mcp", async (req, res) => {
@@ -2140,16 +2152,25 @@ app.all("/mcp", async (req, res) => {
   }
 });
 
+function runtimeHealthLifecycle() {
+  const lifecycle = runtimeLifecycle.status();
+  return {
+    ...lifecycle,
+    mutationIdle: lifecycle.activeMutationCount === 0,
+  };
+}
+
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.12",
+    version: "0.9.13",
     identity: getRuntimeIdentity(),
     runtime: {
       ...runtimePathStatus(),
       sessions: runtimeSessionManager.summary(),
-            lifecycle: runtimeLifecycle.status(),
+      lifecycle: runtimeHealthLifecycle(),
+      backgroundControllersStarted: !candidateMode,
     },
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
@@ -2188,8 +2209,9 @@ app.get("/health", (_req, res) => {
       skillAbi: true,
       resourceArbiter: true,
       sessionAwareConcurrency: true,
-          gracefulDrain: true,
-          workspaceHandoff: true,
+      gracefulDrain: true,
+      workspaceHandoff: true,
+      upgradeCandidateMode: true,
       workspaceLeases: true,
       persistentProcessOwnership: true,
       productionRuntimeIsolation: true,
@@ -2204,13 +2226,26 @@ app.get("/health", (_req, res) => {
   });
 });
 
-const scheduler = startPersistentScheduler();
-const loopController = startPersistentLoopController();
-const processMonitor = startPersistentProcessMonitor();
 const port = Number(process.env.PORT ?? 8787);
-app.listen(port, "127.0.0.1", () => {
-  console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
-  console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
-  console.log(`AgentOS process monitor poll=${processMonitor.pollMs}ms`);
-  console.log(`computer-mcp v0.9.12 listening on http://127.0.0.1:${port}/mcp`);
-});
+
+if (candidateMode) {
+  app.listen(port, "127.0.0.1", () => {
+    console.log(
+      `AgentOS candidate preflight mode: background controllers disabled.`,
+    );
+    console.log(
+      `computer-mcp v0.9.13 candidate listening on http://127.0.0.1:${port}/mcp`,
+    );
+  });
+} else {
+  const scheduler = startPersistentScheduler();
+  const loopController = startPersistentLoopController();
+  const processMonitor = startPersistentProcessMonitor();
+
+  app.listen(port, "127.0.0.1", () => {
+    console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
+    console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
+    console.log(`AgentOS process monitor poll=${processMonitor.pollMs}ms`);
+    console.log(`computer-mcp v0.9.13 listening on http://127.0.0.1:${port}/mcp`);
+  });
+}

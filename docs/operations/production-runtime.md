@@ -46,21 +46,37 @@ This lets code releases be replaced or rolled back without replacing memory, sch
 
 ## Install or upgrade
 
-Production installation refuses tracked dirty source by default.
+Production release operations refuse tracked dirty source by default.
 
-Recommended flow:
+For the **first** production installation:
+
+```bash
+npm run install:production
+```
+
+For an existing Runtime that supports graceful drain:
+
+```bash
+npm run upgrade:production
+```
+
+See [Production upgrades](production-upgrades.md) for candidate preflight, drain, cutover, and rollback semantics.
+
+A recommended release flow is:
 
 ```bash
 npm run typecheck
 npm run verify:concurrency
+npm run verify:drain-handoff
+npm run verify:upgrade-runtime
 npm run verify:production-runtime
 git status
 git commit
 git push
-npm run install:production
+npm run upgrade:production
 ```
 
-The installer:
+The first-install path:
 
 1. builds `dist/`
 2. creates a new release directory
@@ -120,7 +136,7 @@ A healthy production response should report:
 ```json
 {
   "ok": true,
-  "version": "0.9.12",
+  "version": "0.9.13",
   "runtime": {
     "mode": "production"
   }
@@ -147,7 +163,7 @@ Production Runtime code is immutable from the Runtime's own filesystem/Git/shell
 
 This prevents a production Jarvis instance from rewriting the same release that is currently executing.
 
-Upgrade by installing a new release instead.
+Upgrade by creating a new immutable release. For an existing graceful-drain capable Runtime, prefer `npm run upgrade:production`.
 
 ## Uninstall
 
@@ -172,6 +188,7 @@ Run:
 
 ```bash
 npm run verify:production-runtime
+npm run verify:upgrade-runtime
 ```
 
 The verifier builds the project, starts `dist/server.js` on an isolated port/state root, and asserts:

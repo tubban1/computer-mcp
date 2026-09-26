@@ -400,3 +400,36 @@ npm run verify:drain-handoff
 ```
 
 This is the foundation for the next upgrade-coordinator work: candidate Runtime startup, compatibility validation, old-Runtime drain, routing switch, shutdown, and rollback integration.
+
+
+### v0.9.13 — Candidate Preflight & Graceful Production Upgrade
+
+v0.9.13 turns the v0.9.12 drain lifecycle into an executable production-upgrade protocol.
+
+A new release is first started on an alternate loopback port in **candidate mode** against the same production state root. Candidate mode starts in `DRAINING` and deliberately disables Persistent Scheduler, Persistent Loop Controller, and Process Monitor, so compatibility can be checked without creating a second active executor.
+
+After candidate health passes, the upgrade coordinator controls the currently active Runtime through its existing MCP surface:
+
+```text
+skill_run
+  → runtime.control drain
+  → runtime.control wait
+```
+
+Only after the old Runtime reaches a safe mutation/write-process boundary does the coordinator switch `~/.agentos/current`, replace the launchd process, and verify the new production health response.
+
+If cutover health fails, the previous immutable release is restored and rollback health is verified. If drain fails before cutover, the old Runtime is resumed and the release symlink is never changed.
+
+Immutable release `run.sh` files now resolve their own release-local `dist/server.js`, removing an indirect dependency on the mutable `current` symlink.
+
+The upgrade path reuses MCP lifecycle control rather than adding a separate local admin HTTP endpoint.
+
+See [Production upgrades](../operations/production-upgrades.md) and [ADR-0006](../adr/0006-production-upgrade-protocol.md).
+
+Verification:
+
+```bash
+npm run verify:upgrade-runtime
+```
+
+Persistent-state schema migration remains a separate hardening milestone; candidate preflight does not mutate state merely to prove compatibility.

@@ -12,6 +12,11 @@ export function runtimeMode(): AgentOSRuntimeMode {
   return "development";
 }
 
+export function runtimeCandidateMode(): boolean {
+  const raw = process.env.AGENTOS_CANDIDATE_MODE?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 export function runtimeStateRoot(): string {
   const configured = process.env.AGENTOS_STATE_ROOT?.trim();
   if (configured) return configured;
@@ -43,6 +48,7 @@ export function isRuntimeSelfWorkspace(workspace: string): boolean {
 export function runtimePathStatus() {
   return {
     mode: runtimeMode(),
+    candidateMode: runtimeCandidateMode(),
     stateRoot: runtimeStateRoot(),
     codeRoot: runtimeCodeRoot(),
   };
