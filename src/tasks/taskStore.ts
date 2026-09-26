@@ -225,6 +225,11 @@ export async function readPersistentTask(id: string): Promise<PersistentTask> {
   return decryptTask(envelope, key);
 }
 
+export async function deletePersistentTaskRecord(id: string): Promise<void> {
+  await ensureTaskDir();
+  await fs.rm(taskPath(id), { force: false });
+}
+
 export async function listPersistentTaskRecords(): Promise<PersistentTask[]> {
   await ensureTaskDir();
   const key = await loadOrCreateKey();
