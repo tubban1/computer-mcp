@@ -49,9 +49,11 @@ The goal is to avoid exposing hundreds of narrowly specialized actions directly 
 
 ## What changed in v0.9
 
-### Stable Primitive ABI
+### Primitive ABI v1 candidate
 
-v0.9 adds 24 compact primitives that map onto lower-level routed actions:
+v0.9 introduced the compact Primitive layer. By v0.9.4 the catalog is explicitly versioned as **Primitive ABI v1 candidate**.
+
+Core candidates:
 
 - `provider.status`
 - `vision.capture`
@@ -69,14 +71,22 @@ v0.9 adds 24 compact primitives that map onto lower-level routed actions:
 - `fs.read`
 - `fs.write`
 - `fs.list`
-- `fs.query`
+- `fs.stat`
 - `fs.manage`
 - `fs.search`
 - `process.manage`
-- `sys.exec`
 - `git.query`
 - `git.mutate`
 - `tx.manage`
+
+Extensions:
+
+- `sys.exec` — privileged escape hatch
+- `admin.permission` — experimental administrative extension
+
+Compatibility alias:
+
+- `fs.query` → `fs.stat` (deprecated)
 
 Use:
 
@@ -577,7 +587,7 @@ A successful v0.9 tunnel probe should report:
 
 ```text
 server_name=computer-mcp
-server_version=0.9.3
+server_version=0.9.4
 ```
 
 ## Current boundaries
@@ -717,3 +727,44 @@ instead of relying on the localized application display name.
 Clipboard copy detection is also stricter: a clipboard change containing zero text is no longer reported as a successful text capture.
 
 Finally, `desktop_frontmost_app` now prefers a read-only NSWorkspace query before the AX fallback. This avoids a focused-application edge case in the native Helper while still keeping all consequential desktop input and screenshot operations behind `Computer MCP Helper.app`.
+
+
+## v0.9.4 — Primitive ABI v1 Candidate Boundary
+
+v0.9.4 hardens the AgentOS Runtime layer boundary without adding new top-level MCP tools.
+
+Primitive catalog entries now expose:
+
+```text
+abiVersion
+stability
+tier
+deprecated
+replacement
+opMetadata
+```
+
+Current catalog shape:
+
+```text
+23 core candidates
+1 privileged candidate   (sys.exec)
+1 admin experimental     (admin.permission)
+1 deprecated alias       (fs.query → fs.stat)
+```
+
+Key changes:
+
+- `fs.stat` is the canonical filesystem metadata Primitive.
+- `fs.query` remains routable as a deprecated v0.9 compatibility alias.
+- `vision.capture(page)` is the canonical browser page screenshot path.
+- transitional duplicates remain accepted but advertise replacements:
+  - `ui.query(frontmost|bounds)` → `app.lifecycle(...)`
+  - `web.query(tabs)` → `web.session(tabs)`
+  - `web.transfer(screenshot)` → `vision.capture(page)`
+  - Helper permission ops move toward the non-core `admin.permission` extension
+- `sys.exec` is explicitly classified as a privileged escape hatch.
+- all built-in L2 Skills now execute through `executePrimitive(...)` rather than invoking L0.5 routed Actions directly.
+- `npm run verify:isa` checks Primitive metadata, aliases, tiering, and the L2 Skill → L1 Primitive dependency boundary.
+
+Because the top-level MCP tool schema is unchanged, ordinary v0.9.4 Skill/Primitive updates do not require a ChatGPT **Refresh Tools** step once `primitive_call` / `skill_run` are already connected.

@@ -1,8 +1,8 @@
 # L1 Primitive ISA Review
 
-Status: **draft for AgentOS Runtime v1.0**
+Status: **v1 candidate cleanup in progress (implemented through v0.9.4)**
 
-This document reviews the 24 v0.9 Primitive families before the L1 ISA is frozen for 1.x compatibility.
+This document reviews the original 24 v0.9 Primitive families before the L1 ISA is frozen for 1.x compatibility. v0.9.4 introduces one non-core administrative extension (`admin.permission`) plus a deprecated compatibility alias (`fs.query`).
 
 The goal is not to minimize the count at all costs. The goal is to make the ISA:
 
@@ -13,6 +13,32 @@ The goal is not to minimize the count at all costs. The goal is to make the ISA:
 - independent from individual apps/providers where practical
 - explicit about privileged escape hatches
 - free of duplicate ways to express the same operation
+
+## v0.9.4 implementation status
+
+Implemented:
+
+- Primitive ABI version is explicit: `PRIMITIVE_ABI_VERSION = 1`.
+- Catalog entries expose `abiVersion`, `stability`, `tier`, `deprecated`, `replacement`, and per-op deprecation metadata.
+- `fs.stat` is now the canonical filesystem metadata primitive.
+- `fs.query` remains routable as a deprecated compatibility alias to `fs.stat`.
+- `vision.capture(page)` is now the canonical browser-page capture path.
+- `ui.query(frontmost|bounds)`, `web.query(tabs)`, and `web.transfer(screenshot)` remain temporarily routable but are explicitly deprecated with replacements.
+- `sys.exec` is explicitly marked `tier=privileged`.
+- `admin.permission` is an `experimental`, `tier=admin` extension for Helper permission diagnostics/requests.
+- Built-in L2 Skills now execute through `executePrimitive(...)` rather than calling L0.5 routed Actions directly.
+- `npm run verify:isa` enforces catalog metadata, aliases, tiering, and the Skill→Primitive dependency boundary.
+
+Current catalog shape:
+
+```text
+23 core candidates
+1 privileged candidate   (sys.exec)
+1 admin experimental     (admin.permission)
+1 deprecated alias       (fs.query → fs.stat)
+```
+
+The deprecated v0.9 operations are intentionally still accepted so existing clients do not break while the v1 candidate surface converges.
 
 ## Review summary
 
@@ -266,9 +292,9 @@ stable
 deprecated
 ```
 
-During v0.9.x, all primitives remain `candidate`.
+During v0.9.x, core/privileged primitives remain `candidate`, administrative extensions may be `experimental`, and compatibility aliases are `deprecated`.
 
-At v1.0, the selected set becomes `stable`.
+At v1.0, the selected core/privileged set becomes `stable`; non-core admin extensions can remain independently versioned.
 
 ## Compatibility policy for 1.x
 
@@ -283,9 +309,19 @@ After v1.0:
 
 ## Next implementation steps
 
-1. Add Primitive metadata: ABI version, stability, tier, deprecation/replacement.
-2. Apply the four non-breaking/low-risk cleanup changes where possible.
-3. Introduce aliases for any renamed Primitive during the v0.9 transition.
-4. Migrate built-in Skills away from direct routed Actions toward Primitive calls.
-5. Add conformance tests for every Primitive family.
-6. Freeze the L1 candidate set before AgentOS Runtime v1.0.
+Completed in v0.9.4:
+
+1. ✅ Add Primitive metadata: ABI version, stability, tier, deprecation/replacement.
+2. ✅ Apply non-breaking cleanup by adding canonical replacements while retaining deprecated transitional ops.
+3. ✅ Introduce aliases for renamed Primitives during the v0.9 transition.
+4. ✅ Migrate built-in Skills away from direct routed Actions toward Primitive calls.
+5. ✅ Add an initial ISA invariant checker with `npm run verify:isa`.
+
+Remaining before v1.0:
+
+1. Add execution/conformance fixtures for every Primitive family and every stable op.
+2. Remove deprecated duplicate ops from the **v1 frozen surface** while preserving v0.9 compatibility routing.
+3. Decide whether pointer operations should remain `pointer.click` or become a more general `pointer.act` before freeze.
+4. Decide whether `web.act(use_tab)` should stay or move entirely under `web.session`.
+5. Define Skill schema/version metadata and Primitive requirements.
+6. Freeze the L1 candidate set and mark the selected entries `stable`.

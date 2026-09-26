@@ -76,14 +76,22 @@ Current Primitive families:
 - `fs.read`
 - `fs.write`
 - `fs.list`
-- `fs.query`
+- `fs.stat`
 - `fs.manage`
 - `fs.search`
 - `process.manage`
-- `sys.exec`
 - `git.query`
 - `git.mutate`
 - `tx.manage`
+
+Non-core extensions:
+
+- `sys.exec` — privileged escape hatch; use typed Primitives/Skills when available.
+- `admin.permission` — experimental administrative extension for native Helper permission diagnostics and prompts.
+
+Compatibility alias during v0.9:
+
+- `fs.query` → `fs.stat` (deprecated)
 
 The L1 ISA should be:
 
@@ -191,6 +199,16 @@ Introduces:
 - native macOS Helper
 - richer perception channels
 - visual + clipboard WeChat perception
+
+v0.9.4 tightens the architecture boundary:
+
+- Primitive ABI version is explicit (`abiVersion=1`).
+- Primitive catalog exposes stability/tier/deprecation metadata.
+- `fs.stat` becomes canonical while `fs.query` remains a deprecated alias.
+- duplicate transitional ops remain accepted but advertise replacements.
+- `sys.exec` is classified as privileged.
+- built-in Skills execute through the L1 Primitive ISA rather than directly invoking L0.5 Actions.
+- `npm run verify:isa` checks the L2→L1 dependency boundary and catalog invariants.
 
 ### v1.0 readiness
 

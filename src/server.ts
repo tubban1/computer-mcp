@@ -226,7 +226,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.3",
+    version: "0.9.4",
   });
 
   server.tool(
@@ -891,7 +891,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.3",
+          version: "0.9.4",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -1794,7 +1794,7 @@ function createServer() {
 
   server.tool(
     "capability_manifest",
-    "Return the v0.9 capability manifest for a goal: matching skills, stable primitives, provider availability, and architecture guidance. Prefer this over scanning all low-level tools.",
+    "Return the AgentOS Runtime capability manifest for a goal: matching skills, Primitive ABI v1 candidates, provider availability, and architecture guidance. Prefer this over scanning low-level tools.",
     {
       goal: z.string().max(2000).optional(),
     },
@@ -1816,7 +1816,7 @@ function createServer() {
 
   server.tool(
     "primitive_catalog",
-    "List the stable v0.9 Primitive ABI. Primitives compress many provider actions into a smaller cross-domain instruction set.",
+    "List AgentOS Runtime Primitive ABI v1 candidates, aliases, stability/tier metadata, and deprecated-operation replacements.",
     {},
     {
       title: "Primitive Catalog",
@@ -1836,7 +1836,7 @@ function createServer() {
 
   server.tool(
     "primitive_call",
-    "Execute one stable Primitive ABI instruction. Use dry_run=true to resolve the primitive to a routed action and validate its contract without executing.",
+    "Execute one AgentOS Runtime Primitive ABI instruction. Use dry_run=true to resolve canonical/legacy aliases and validate its Action Contract without executing.",
     {
       primitive: z.string().min(1),
       op: z.string().min(1),
@@ -1867,7 +1867,7 @@ function createServer() {
 
   server.tool(
     "skill_catalog",
-    "List v0.9 reusable Skills. Skills package Primitive graphs, state logic, and governance metadata for known workflows.",
+    "List AgentOS Runtime L2 Skills. Skills package Primitive graphs, state logic, and governance metadata for known workflows.",
     {},
     {
       title: "Skill Catalog",
@@ -1976,7 +1976,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.3",
+    version: "0.9.4",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1999,5 +1999,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.9.3 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.4 listening on http://127.0.0.1:${port}/mcp`);
 });

@@ -5,16 +5,54 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
+export const PRIMITIVE_ABI_VERSION = 1;
+
+export type PrimitiveStability =
+  | "experimental"
+  | "candidate"
+  | "stable"
+  | "deprecated";
+
+export type PrimitiveTier = "core" | "admin" | "privileged";
+
+type PrimitiveOpMetadata = {
+  deprecated?: boolean;
+  replacement?: string;
+  note?: string;
+};
+
 type PrimitiveDefinition = {
   id: string;
   domain: string;
   description: string;
   ops: string[];
+  abiVersion?: number;
+  stability?: PrimitiveStability;
+  tier?: PrimitiveTier;
+  deprecated?: boolean;
+  replacement?: string;
+  opMetadata?: Record<string, PrimitiveOpMetadata>;
   route: (op: string, args: JsonObject) => {
     action: string;
     args: JsonObject;
   };
 };
+
+type PrimitiveAlias = {
+  id: string;
+  canonical: string;
+  replacement: string;
+  note: string;
+};
+
+const primitiveAliases: PrimitiveAlias[] = [
+  {
+    id: "fs.query",
+    canonical: "fs.stat",
+    replacement: "fs.stat",
+    note: "fs.query is retained as a v0.9 compatibility alias and will not be part of the frozen v1 core ISA.",
+  },
+];
 
 function requireOp(op: string, allowed: string[], primitive: string): string {
   const normalized = op.trim().toLowerCase();
@@ -41,16 +79,19 @@ const definitions: PrimitiveDefinition[] = [
     id: "vision.capture",
     domain: "perception",
     description: "Capture the whole desktop or a rectangular region.",
-    ops: ["screen", "region"],
+    ops: ["screen", "region", "page"],
     route: (op, args) => {
-      const normalized = requireOp(op, ["screen", "region"], "vision.capture");
-      return {
-        action:
-          normalized === "screen"
-            ? "desktop.screenshot"
-            : "desktop.screenshot_region",
-        args,
-      };
+      const normalized = requireOp(
+        op,
+        ["screen", "region", "page"],
+        "vision.capture",
+      );
+      const action = {
+        screen: "desktop.screenshot",
+        region: "desktop.screenshot_region",
+        page: "browser.screenshot",
+      }[normalized]!;
+      return { action, args };
     },
   },
   {
@@ -58,6 +99,18 @@ const definitions: PrimitiveDefinition[] = [
     domain: "perception",
     description: "Inspect macOS accessibility, app focus, or window geometry.",
     ops: ["tree", "find", "frontmost", "bounds"],
+    opMetadata: {
+      frontmost: {
+        deprecated: true,
+        replacement: "app.lifecycle(frontmost)",
+        note: "Retained for v0.9 compatibility; application state belongs to app.lifecycle.",
+      },
+      bounds: {
+        deprecated: true,
+        replacement: "app.lifecycle(bounds)",
+        note: "Retained for v0.9 compatibility; window state belongs to app.lifecycle.",
+      },
+    },
     route: (op, args) => {
       const normalized = requireOp(
         op,
@@ -154,6 +207,18 @@ const definitions: PrimitiveDefinition[] = [
     domain: "app",
     description: "Activate an app, inspect the active app/window, or manage the native macOS helper permissions.",
     ops: ["launch", "frontmost", "bounds", "helper_status", "request_permissions"],
+    opMetadata: {
+      helper_status: {
+        deprecated: true,
+        replacement: "admin.permission(status)",
+        note: "Helper administration is outside the frozen core ISA.",
+      },
+      request_permissions: {
+        deprecated: true,
+        replacement: "admin.permission(request)",
+        note: "Permission prompting is an administrative operation, not application lifecycle.",
+      },
+    },
     route: (op, args) => {
       const normalized = requireOp(
         op,
@@ -171,6 +236,29 @@ const definitions: PrimitiveDefinition[] = [
     },
   },
   {
+    id: "admin.permission",
+    domain: "admin",
+    stability: "experimental",
+    tier: "admin",
+    description:
+      "Inspect or request native desktop-helper permissions. Administrative extension; not part of the frozen core ISA candidate.",
+    ops: ["status", "request"],
+    route: (op, args) => {
+      const normalized = requireOp(
+        op,
+        ["status", "request"],
+        "admin.permission",
+      );
+      return {
+        action:
+          normalized === "status"
+            ? "desktop.helper_status"
+            : "desktop.helper_request_permissions",
+        args,
+      };
+    },
+  },
+  {
     id: "web.open",
     domain: "web",
     description: "Navigate the managed browser, optionally selecting headless mode.",
@@ -185,6 +273,13 @@ const definitions: PrimitiveDefinition[] = [
     domain: "web",
     description: "Read page content, tabs, or find visible controls.",
     ops: ["snapshot", "find", "tabs"],
+    opMetadata: {
+      tabs: {
+        deprecated: true,
+        replacement: "web.session(tabs)",
+        note: "Tab/session state has one canonical home in web.session.",
+      },
+    },
     route: (op, args) => {
       const normalized = requireOp(op, ["snapshot", "find", "tabs"], "web.query");
       const action = {
@@ -219,6 +314,13 @@ const definitions: PrimitiveDefinition[] = [
     domain: "web",
     description: "Transfer files into a page or capture a page screenshot.",
     ops: ["upload", "screenshot"],
+    opMetadata: {
+      screenshot: {
+        deprecated: true,
+        replacement: "vision.capture(page)",
+        note: "Page capture is perception, not file transfer.",
+      },
+    },
     route: (op, args) => {
       const normalized = requireOp(
         op,
@@ -294,12 +396,19 @@ const definitions: PrimitiveDefinition[] = [
     },
   },
   {
-    id: "fs.query",
+    id: "fs.stat",
     domain: "data",
-    description: "Read file metadata.",
-    ops: ["info"],
+    description: "Read file or directory metadata.",
+    ops: ["get", "info"],
+    opMetadata: {
+      info: {
+        deprecated: true,
+        replacement: "fs.stat(get)",
+        note: "The transitional info op remains accepted during v0.9.",
+      },
+    },
     route: (op, args) => {
-      requireOp(op, ["info"], "fs.query");
+      requireOp(op, ["get", "info"], "fs.stat");
       return { action: "fs.info", args };
     },
   },
@@ -357,7 +466,9 @@ const definitions: PrimitiveDefinition[] = [
   {
     id: "sys.exec",
     domain: "system",
-    description: "Execute a controlled shell command.",
+    tier: "privileged",
+    description:
+      "Execute a controlled shell command as a privileged escape hatch. Prefer typed primitives or Skills when available.",
     ops: ["run"],
     route: (op, args) => {
       requireOp(op, ["run"], "sys.exec");
@@ -405,9 +516,52 @@ const definitions: PrimitiveDefinition[] = [
 ];
 
 const byId = new Map(definitions.map((definition) => [definition.id, definition]));
+const aliasById = new Map(primitiveAliases.map((alias) => [alias.id, alias]));
+
+function primitiveMetadata(definition: PrimitiveDefinition) {
+  return {
+    abiVersion: definition.abiVersion ?? PRIMITIVE_ABI_VERSION,
+    stability: definition.stability ?? "candidate",
+    tier: definition.tier ?? "core",
+    deprecated: definition.deprecated ?? false,
+    replacement: definition.replacement ?? null,
+  } as const;
+}
 
 export function getPrimitiveCatalog() {
-  return definitions.map(({ route: _route, ...definition }) => definition);
+  const canonical = definitions.map((definition) => {
+    const { route: _route, ...catalogDefinition } = definition;
+    return {
+      ...primitiveMetadata(definition),
+      ...catalogDefinition,
+      canonical: true,
+    };
+  });
+
+  const aliases = primitiveAliases.map((alias) => {
+    const definition = byId.get(alias.canonical);
+    if (!definition) {
+      throw new Error(
+        `Primitive alias "${alias.id}" points to unknown primitive "${alias.canonical}".`,
+      );
+    }
+    return {
+      ...primitiveMetadata(definition),
+      id: alias.id,
+      domain: definition.domain,
+      description: `Deprecated alias for ${alias.canonical}.`,
+      ops: definition.ops,
+      opMetadata: definition.opMetadata ?? {},
+      stability: "deprecated" as const,
+      deprecated: true,
+      replacement: alias.replacement,
+      canonical: false,
+      canonicalId: alias.canonical,
+      note: alias.note,
+    };
+  });
+
+  return [...canonical, ...aliases];
 }
 
 export function resolvePrimitive(
@@ -415,7 +569,9 @@ export function resolvePrimitive(
   op: string,
   args: JsonObject = {},
 ) {
-  const definition = byId.get(primitive);
+  const alias = aliasById.get(primitive);
+  const canonicalPrimitive = alias?.canonical ?? primitive;
+  const definition = byId.get(canonicalPrimitive);
   if (!definition) {
     throw new Error(
       `Unknown primitive "${primitive}". Call primitive_catalog for supported primitives.`,
@@ -424,11 +580,30 @@ export function resolvePrimitive(
 
   const routed = definition.route(op, args);
   const validated = validateRoutedAction(routed.action, routed.args);
+  const opMetadata = definition.opMetadata?.[op.trim().toLowerCase()] ?? null;
   return {
     primitive,
+    canonicalPrimitive,
+    aliasUsed: alias
+      ? {
+          deprecated: true,
+          replacement: alias.replacement,
+          note: alias.note,
+        }
+      : null,
     op,
+    opMetadata,
     domain: definition.domain,
     description: definition.description,
+    ...(alias
+      ? {
+          abiVersion: definition.abiVersion ?? PRIMITIVE_ABI_VERSION,
+          stability: "deprecated" as const,
+          tier: definition.tier ?? "core",
+          deprecated: true,
+          replacement: alias.replacement,
+        }
+      : primitiveMetadata(definition)),
     routedAction: routed.action,
     validation: validated,
   };
@@ -438,15 +613,23 @@ export async function executePrimitive(
   primitive: string,
   op: string,
   args: JsonObject = {},
+  options?: { bypassResourceKeys?: string[] },
 ) {
   const resolved = resolvePrimitive(primitive, op, args);
   const executed = await executeRoutedAction(
     resolved.routedAction,
     resolved.validation.args,
+    options,
   );
   return {
     primitive,
+    canonicalPrimitive: resolved.canonicalPrimitive,
+    aliasUsed: resolved.aliasUsed,
     op,
+    opMetadata: resolved.opMetadata,
+    abiVersion: resolved.abiVersion,
+    stability: resolved.stability,
+    tier: resolved.tier,
     routedAction: resolved.routedAction,
     provider: executed.provider,
     contract: executed.contract,

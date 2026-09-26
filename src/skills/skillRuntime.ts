@@ -3,7 +3,7 @@ import {
   assertAllowedExistingPath,
   assertAllowedTargetPath,
 } from "../security/pathGuard.js";
-import { executeRoutedAction } from "../router/actionRouter.js";
+import { executePrimitive } from "../primitives/primitiveRuntime.js";
 import { resourceArbiter } from "../runtime/resourceArbiter.js";
 import { getPrimitiveCatalog } from "../primitives/primitiveRuntime.js";
 import { getProviderStatuses } from "../providers/registry.js";
@@ -58,13 +58,14 @@ function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
-async function call(
-  action: string,
+async function callPrimitive(
+  primitive: string,
+  op: string,
   args: JsonObject,
   bypassResourceKeys: string[] = [],
 ) {
   return (
-    await executeRoutedAction(action, args, {
+    await executePrimitive(primitive, op, args, {
       bypassResourceKeys,
     })
   ).result;
@@ -166,11 +167,16 @@ const skills: SkillDefinition[] = [
     },
     dryRunPlan: (args) => ({
       steps: [
-        { action: "desktop.open_app", args: { app_name: "com.tencent.xinWeChat" } },
+        {
+          primitive: "app.lifecycle",
+          op: "launch",
+          args: { app_name: "com.tencent.xinWeChat" },
+        },
         ...(optionalBoolean(args, "clipboard_first", true)
           ? [
               {
-                action: "desktop.clipboard_copy_selection",
+                primitive: "clipboard",
+                op: "copy_selection",
                 args: {
                   timeout_ms: args.clipboard_timeout_ms ?? 1200,
                   restore: true,
@@ -181,29 +187,39 @@ const skills: SkillDefinition[] = [
         ...(!optionalBoolean(args, "clipboard_only", false)
           ? [
               {
-                action: "desktop.ui_tree",
+                primitive: "ui.query",
+                op: "tree",
                 args: { app_name: "com.tencent.xinWeChat", max_elements: args.max_elements ?? 700 },
               },
             ]
           : []),
         ...(typeof args.screenshot_path === "string"
           ? [
-              { action: "desktop.window_bounds", args: { app_name: "com.tencent.xinWeChat" } },
-              { action: "desktop.screenshot_region", args: "derived from window bounds" },
+              {
+                primitive: "app.lifecycle",
+                op: "bounds",
+                args: { app_name: "com.tencent.xinWeChat" },
+              },
+              {
+                primitive: "vision.capture",
+                op: "region",
+                args: "derived from window bounds",
+              },
             ]
           : []),
       ],
     }),
     run: async (args) =>
       await withSkillResources("wechat.read", WECHAT_READ_CONTRACT, async (held) => {
-        await call("desktop.open_app", { app_name: "com.tencent.xinWeChat" }, held);
+        await callPrimitive("app.lifecycle", "launch", { app_name: "com.tencent.xinWeChat" }, held);
         await sleep(350);
 
         let clipboard: any = null;
         if (optionalBoolean(args, "clipboard_first", true)) {
           try {
-            clipboard = await call(
-              "desktop.clipboard_copy_selection",
+            clipboard = await callPrimitive(
+              "clipboard",
+              "copy_selection",
               {
                 timeout_ms:
                   typeof args.clipboard_timeout_ms === "number"
@@ -245,8 +261,9 @@ const skills: SkillDefinition[] = [
 
         let tree: any = { elements: [] };
         if (!optionalBoolean(args, "clipboard_only", false)) {
-          tree = (await call(
-            "desktop.ui_tree",
+          tree = (await callPrimitive(
+            "ui.query",
+            "tree",
             {
               app_name: "com.tencent.xinWeChat",
               max_elements:
@@ -258,13 +275,15 @@ const skills: SkillDefinition[] = [
 
         let screenshot: unknown = null;
         if (typeof args.screenshot_path === "string" && args.screenshot_path.trim()) {
-          const bounds = (await call(
-            "desktop.window_bounds",
+          const bounds = (await callPrimitive(
+            "app.lifecycle",
+            "bounds",
             { app_name: "com.tencent.xinWeChat" },
             held,
           )) as any;
-          screenshot = await call(
-            "desktop.screenshot_region",
+          screenshot = await callPrimitive(
+            "vision.capture",
+            "region",
             {
               path: args.screenshot_path,
               x: bounds.x,
@@ -322,9 +341,14 @@ const skills: SkillDefinition[] = [
     },
     dryRunPlan: (args) => ({
       steps: [
-        { action: "desktop.open_app", args: { app_name: "com.tencent.xinWeChat" } },
         {
-          action: "desktop.clipboard_copy_selection",
+          primitive: "app.lifecycle",
+          op: "launch",
+          args: { app_name: "com.tencent.xinWeChat" },
+        },
+        {
+          primitive: "clipboard",
+          op: "copy_selection",
           args: { timeout_ms: args.timeout_ms ?? 1500, restore: true },
         },
       ],
@@ -346,10 +370,11 @@ const skills: SkillDefinition[] = [
         "wechat.copy_selected",
         contract,
         async (held) => {
-          await call("desktop.open_app", { app_name: "com.tencent.xinWeChat" }, held);
+          await callPrimitive("app.lifecycle", "launch", { app_name: "com.tencent.xinWeChat" }, held);
           await sleep(250);
-          return await call(
-            "desktop.clipboard_copy_selection",
+          return await callPrimitive(
+            "clipboard",
+            "copy_selection",
             {
               timeout_ms:
                 typeof args.timeout_ms === "number" ? args.timeout_ms : 1500,
@@ -378,11 +403,13 @@ const skills: SkillDefinition[] = [
     dryRunPlan: (args) => ({
       steps: [
         {
-          action: "desktop.open_app",
+          primitive: "app.lifecycle",
+          op: "launch",
           args: { app_name: "com.tencent.xinWeChat" },
         },
         {
-          action: "desktop.click",
+          primitive: "pointer.click",
+          op: "coordinate",
           args: {
             x: args.x,
             y: args.y,
@@ -391,7 +418,8 @@ const skills: SkillDefinition[] = [
           },
         },
         {
-          action: "desktop.clipboard_copy_selection",
+          primitive: "clipboard",
+          op: "copy_selection",
           args: { timeout_ms: args.timeout_ms ?? 1500, restore: true },
         },
       ],
@@ -416,21 +444,23 @@ const skills: SkillDefinition[] = [
         "wechat.copy_at",
         WECHAT_COPY_AT_CONTRACT,
         async (held) => {
-          await call(
-            "desktop.open_app",
+          await callPrimitive(
+            "app.lifecycle",
+            "launch",
             { app_name: "com.tencent.xinWeChat" },
             held,
           );
           await sleep(250);
 
           for (let index = 0; index < clickCount; index += 1) {
-            await call("desktop.click", { x, y }, held);
+            await callPrimitive("pointer.click", "coordinate", { x, y }, held);
             if (index + 1 < clickCount) await sleep(clickIntervalMs);
           }
           await sleep(120);
 
-          const clipboard = await call(
-            "desktop.clipboard_copy_selection",
+          const clipboard = await callPrimitive(
+            "clipboard",
+            "copy_selection",
             { timeout_ms: timeoutMs, restore: true },
             held,
           );
@@ -473,7 +503,8 @@ const skills: SkillDefinition[] = [
     dryRunPlan: (args) => ({
       steps: [
         {
-          action: "desktop.open_app",
+          primitive: "app.lifecycle",
+          op: "launch",
           args: { app_name: "com.tencent.xinWeChat" },
         },
         {
@@ -533,8 +564,9 @@ const skills: SkillDefinition[] = [
         "wechat.read_points",
         WECHAT_COPY_AT_CONTRACT,
         async (held) => {
-          await call(
-            "desktop.open_app",
+          await callPrimitive(
+            "app.lifecycle",
+            "launch",
             { app_name: "com.tencent.xinWeChat" },
             held,
           );
@@ -547,13 +579,14 @@ const skills: SkillDefinition[] = [
             const point = points[pointIndex]!;
             try {
               for (let index = 0; index < clickCount; index += 1) {
-                await call("desktop.click", point, held);
+                await callPrimitive("pointer.click", "coordinate", point, held);
                 if (index + 1 < clickCount) await sleep(clickIntervalMs);
               }
               await sleep(120);
 
-              const clipboard = (await call(
-                "desktop.clipboard_copy_selection",
+              const clipboard = (await callPrimitive(
+                "clipboard",
+                "copy_selection",
                 { timeout_ms: timeoutMs, restore: true },
                 held,
               )) as any;
@@ -632,32 +665,36 @@ const skills: SkillDefinition[] = [
       const shouldSend = optionalBoolean(args, "send", false);
 
       return await withSkillResources("wechat.send", WECHAT_SEND_CONTRACT, async (held) => {
-        await call("desktop.open_app", { app_name: "com.tencent.xinWeChat" }, held);
+        await callPrimitive("app.lifecycle", "launch", { app_name: "com.tencent.xinWeChat" }, held);
         await sleep(300);
-        await call(
-          "desktop.key",
+        await callPrimitive(
+          "keyboard.press",
+          "key",
           { key: "1", modifiers: ["command"] },
           held,
         );
         await sleep(250);
-        await call(
-          "desktop.key",
+        await callPrimitive(
+          "keyboard.press",
+          "key",
           { key: "f", modifiers: ["command"] },
           held,
         );
         await sleep(250);
-        await call("desktop.type", { text: contactName }, held);
+        await callPrimitive("keyboard.type", "text", { text: contactName }, held);
         await sleep(700);
-        await call("desktop.key", { key: "return" }, held);
+        await callPrimitive("keyboard.press", "key", { key: "return" }, held);
         await sleep(600);
 
-        const bounds = (await call(
-          "desktop.window_bounds",
+        const bounds = (await callPrimitive(
+          "app.lifecycle",
+          "bounds",
           { app_name: "com.tencent.xinWeChat" },
           held,
         )) as any;
-        const verification = (await call(
-          "desktop.ui_find",
+        const verification = (await callPrimitive(
+          "ui.query",
+          "find",
           {
             app_name: "com.tencent.xinWeChat",
             query: contactName,
@@ -705,11 +742,11 @@ const skills: SkillDefinition[] = [
 
         const inputX = Math.round(bounds.x + bounds.width * 0.72);
         const inputY = Math.round(bounds.y + bounds.height * 0.84);
-        await call("desktop.click", { x: inputX, y: inputY }, held);
+        await callPrimitive("pointer.click", "coordinate", { x: inputX, y: inputY }, held);
         await sleep(150);
-        await call("desktop.type", { text: message }, held);
+        await callPrimitive("keyboard.type", "text", { text: message }, held);
         await sleep(250);
-        await call("desktop.key", { key: "return" }, held);
+        await callPrimitive("keyboard.press", "key", { key: "return" }, held);
 
         return {
           prepared: true,
@@ -751,8 +788,9 @@ const skills: SkillDefinition[] = [
       const headless = optionalBoolean(args, "headless", true);
 
       return await withSkillResources("xhs.publish", BROWSER_PUBLISH_CONTRACT, async (held) => {
-        await call(
-          "browser.open",
+        await callPrimitive(
+          "web.open",
+          "navigate",
           {
             url: "https://creator.xiaohongshu.com/publish/publish",
             wait_until: "domcontentloaded",
@@ -763,8 +801,9 @@ const skills: SkillDefinition[] = [
         await sleep(1200);
 
         if (images.length > 0) {
-          await call(
-            "browser.upload",
+          await callPrimitive(
+            "web.transfer",
+            "upload",
             {
               selector: 'input[type="file"]',
               files: images,
@@ -774,8 +813,9 @@ const skills: SkillDefinition[] = [
           await sleep(1000);
         }
 
-        await call(
-          "browser.type",
+        await callPrimitive(
+          "web.act",
+          "type",
           {
             selector:
               'input[placeholder*="标题"], input[placeholder*="title" i], input[type="text"]',
@@ -784,8 +824,9 @@ const skills: SkillDefinition[] = [
           held,
         );
 
-        await call(
-          "browser.type",
+        await callPrimitive(
+          "web.act",
+          "type",
           {
             selector:
               'div[contenteditable="true"], textarea[placeholder*="正文"], textarea',
@@ -815,7 +856,7 @@ const skills: SkillDefinition[] = [
         let clicked = false;
         for (const selector of selectors) {
           try {
-            await call("browser.click", { selector }, held);
+            await callPrimitive("web.act", "click", { selector }, held);
             clicked = true;
             break;
           } catch (error) {
@@ -829,8 +870,9 @@ const skills: SkillDefinition[] = [
         }
 
         await sleep(1200);
-        const snapshot = await call(
-          "browser.snapshot",
+        const snapshot = await callPrimitive(
+          "web.query",
+          "snapshot",
           { max_chars: 6000 },
           held,
         );
@@ -873,8 +915,9 @@ const skills: SkillDefinition[] = [
       const headless = optionalBoolean(args, "headless", true);
 
       return await withSkillResources("email.compose", EMAIL_CONTRACT, async (held) => {
-        await call(
-          "browser.open",
+        await callPrimitive(
+          "web.open",
+          "navigate",
           {
             url: "https://mail.google.com/mail/u/0/#inbox?compose=new",
             wait_until: "domcontentloaded",
@@ -884,8 +927,9 @@ const skills: SkillDefinition[] = [
         );
         await sleep(1200);
 
-        await call(
-          "browser.type",
+        await callPrimitive(
+          "web.act",
+          "type",
           {
             selector:
               'input[peoplekit-id], input[aria-label^="To"], input[aria-label*="Recipients"], input[role="combobox"]',
@@ -894,16 +938,18 @@ const skills: SkillDefinition[] = [
           },
           held,
         );
-        await call(
-          "browser.type",
+        await callPrimitive(
+          "web.act",
+          "type",
           {
             selector: 'input[name="subjectbox"]',
             text: subject,
           },
           held,
         );
-        await call(
-          "browser.type",
+        await callPrimitive(
+          "web.act",
+          "type",
           {
             selector:
               'div[aria-label="Message Body"], div[role="textbox"][contenteditable="true"]',
@@ -935,7 +981,7 @@ const skills: SkillDefinition[] = [
         let clicked = false;
         for (const selector of selectors) {
           try {
-            await call("browser.click", { selector }, held);
+            await callPrimitive("web.act", "click", { selector }, held);
             clicked = true;
             break;
           } catch (error) {
@@ -985,7 +1031,7 @@ const skills: SkillDefinition[] = [
       }
 
       const parent = path.dirname(outputPath);
-      await call("fs.mkdir", { path: parent, recursive: true });
+      await callPrimitive("fs.manage", "mkdir", { path: parent, recursive: true });
 
       const prefix: string[] = ["ffmpeg", "-y"];
       if (typeof args.start_seconds === "number" && args.start_seconds >= 0) {
@@ -1044,8 +1090,9 @@ const skills: SkillDefinition[] = [
         "media.transcode",
         MEDIA_CONTRACT,
         async (held) => {
-          const shellResult = await call(
-            "shell.exec",
+          const shellResult = await callPrimitive(
+            "sys.exec",
+            "run",
             {
               command,
               cwd: parent,
@@ -1132,9 +1179,14 @@ export async function getCapabilityManifest(goal = "") {
   return {
     goal: goal || null,
     architecture: {
+      name: "AgentOS Runtime",
       planner: "ChatGPT",
+      layerModel: "L3 Planner → L2 Skill → L1 Primitive ISA → L0.5 Action → L0 Provider",
       skillRuntime: "v0.9",
-      primitiveAbi: "v0.9",
+      primitiveAbi: {
+        version: 1,
+        stability: "candidate",
+      },
       persistentTasks: "v0.8",
       dependencyGraph: "v0.7",
       providerRouter: "v0.6",
@@ -1144,6 +1196,6 @@ export async function getCapabilityManifest(goal = "") {
     primitives: getPrimitiveCatalog(),
     providers: await getProviderStatuses(),
     guidance:
-      "Prefer a matching skill for known workflows. Use primitives for novel composition and routed actions only for low-level precision.",
+      "Prefer a matching L2 Skill for known workflows. Use the L1 Primitive ISA for novel composition. Treat sys.exec as a privileged escape hatch, and use routed L0.5 Actions only for debugging or compatibility.",
   };
 }

@@ -1,12 +1,13 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:isa": "tsx scripts/verify-primitive-isa.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
