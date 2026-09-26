@@ -880,3 +880,19 @@ Verification:
     npm run verify:scheduler
 
 Architecture: [`docs/SCHEDULER_AND_WAKE.md`](docs/SCHEDULER_AND_WAKE.md)
+
+## v0.9.7 — Persistent Loop Controller
+
+v0.9.7 adds a durable stateful orchestration loop above Persistent Primitive Tasks.
+
+New L2 Skill: `runtime.loop`.
+
+It supports 2–16 phases, cross-phase carry with `{{loop.lastOutput}}` / `{{loop.phase.<id>}}`, change detection with `wait_for_change`, bounded cycles, end times, encrypted local loop state, and automatic recovery after Runtime restart.
+
+This targets agent-to-agent relays, UI wait/respond cycles, and repeated stateful automations that a static recurring scheduler cannot model safely.
+
+No new top-level MCP tool is required.
+
+Verification: `npm run verify:loop`.
+
+Architecture: [`docs/LOOP_CONTROLLER.md`](docs/LOOP_CONTROLLER.md)

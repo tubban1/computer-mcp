@@ -88,6 +88,7 @@ import {
   getSkillCatalog,
 } from "./skills/skillRuntime.js";
 import { startPersistentScheduler } from "./runtime/scheduler.js";
+import { startPersistentLoopController } from "./runtime/loopController.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -227,7 +228,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.6",
+    version: "0.9.7",
   });
 
   server.tool(
@@ -892,7 +893,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.6",
+          version: "0.9.7",
           allowedDirectories: configuredRoots(),
           runtimeOwnedDirectories: runtimeOwnedRoots(),
           write: envFlag("ALLOW_WRITE", true),
@@ -1894,7 +1895,7 @@ function createServer() {
 
   server.tool(
     "skill_run",
-    "Run an AgentOS Runtime Skill such as runtime.compile_task, runtime.schedule, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Durable Skills may compile Primitive graphs or persistent wake schedules; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.",
+    "Run an AgentOS Runtime Skill such as runtime.compile_task, runtime.schedule, runtime.loop, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Durable Skills may compile Primitive graphs or persistent wake schedules; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.",
     {
       skill: z.string().min(1),
       args: z.record(z.unknown()).optional(),
@@ -1983,7 +1984,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.6",
+    version: "0.9.7",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1995,6 +1996,8 @@ app.get("/health", (_req, res) => {
       persistentTasks: true,
       persistentScheduler: true,
       scheduledPrimitiveGraphs: true,
+      persistentLoopController: true,
+      crossPhaseCarryState: true,
       taskStaging: true,
       durablePrimitiveTasks: true,
       primitiveAbi: true,
@@ -2010,8 +2013,10 @@ app.get("/health", (_req, res) => {
 });
 
 const scheduler = startPersistentScheduler();
+const loopController = startPersistentLoopController();
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
   console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
-  console.log(`computer-mcp v0.9.6 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
+  console.log(`computer-mcp v0.9.7 listening on http://127.0.0.1:${port}/mcp`);
 });

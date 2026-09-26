@@ -25,6 +25,14 @@ import type {
   ScheduleStopWhen,
   ScheduleTrigger,
 } from "../runtime/schedulerStore.js";
+import {
+  cancelPersistentLoop,
+  createPersistentLoop,
+  deletePersistentLoop,
+  getPersistentLoop,
+  listPersistentLoops,
+} from "../runtime/loopController.js";
+import type { LoopPhase } from "../runtime/loopStore.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -77,6 +85,18 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     },
   },
   "runtime.schedule": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "durable",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.loop": {
     skillVersion: "0.1.0",
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
@@ -353,6 +373,44 @@ function parseStopWhen(args: JsonObject): ScheduleStopWhen | undefined {
   return stop;
 }
 
+function parseLoopPhases(raw: unknown): LoopPhase[] {
+  const phases = Array.isArray(raw) ? raw : [];
+  if (phases.length < 2) throw new Error("runtime.loop requires at least two phases.");
+  if (phases.length > 16) throw new Error("runtime.loop accepts at most 16 phases.");
+
+  return phases.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Invalid loop phase at index ${index}.`);
+    }
+    const value = item as Record<string, unknown>;
+    const id = typeof value.id === "string" ? value.id.trim() : "";
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+      throw new Error(`Invalid loop phase id at index ${index}: "${id}".`);
+    }
+    const outputRef =
+      typeof value.output_ref === "string"
+        ? value.output_ref.trim()
+        : typeof value.outputRef === "string"
+          ? value.outputRef.trim()
+          : undefined;
+
+    return {
+      id,
+      ...(typeof value.label === "string" && value.label.trim()
+        ? { label: value.label.trim() }
+        : {}),
+      steps: parsePrimitiveTaskSteps(value.steps, `runtime.loop phase "${id}"`),
+      ...(outputRef ? { outputRef } : {}),
+      waitForChange:
+        typeof value.wait_for_change === "boolean"
+          ? value.wait_for_change
+          : typeof value.waitForChange === "boolean"
+            ? value.waitForChange
+            : false,
+    };
+  });
+}
+
 function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
@@ -398,6 +456,19 @@ const SCHEDULER_CONTRACT: SkillContract = {
   idempotent: false,
   sideEffects: ["schedule_mutation", "persistent_task_creation"],
   requiresVerification: false,
+  retryPolicy: "manual",
+  resources: [],
+};
+
+const LOOP_CONTRACT: SkillContract = {
+  riskLevel: "high",
+  idempotent: false,
+  sideEffects: [
+    "loop_state_mutation",
+    "persistent_task_creation",
+    "repeated_external_interaction",
+  ],
+  requiresVerification: true,
   retryPolicy: "manual",
   resources: [],
 };
@@ -604,6 +675,95 @@ const skills: SkillDefinition[] = [
         maxRuns:
           typeof args.max_runs === "number" ? args.max_runs : undefined,
         endAt: typeof args.end_at === "string" ? args.end_at : undefined,
+      });
+    },
+  },
+  {
+    id: "runtime.loop",
+    domain: "runtime",
+    description:
+      "Create, inspect, cancel, or delete a persistent multi-phase automation loop with cross-phase carry state and change detection.",
+    keywords: [
+      "loop",
+      "relay",
+      "agent loop",
+      "automation loop",
+      "cross agent",
+      "循环",
+      "接力",
+      "自动化",
+    ],
+    contract: LOOP_CONTRACT,
+    inputs: {
+      op: "create | list | status | cancel | delete. Default: create.",
+      label: "Human-readable loop label for create.",
+      phases:
+        "2-16 phases. Each phase has {id,label?,steps,output_ref?,wait_for_change?}. Use {{loop.lastOutput}} or {{loop.phase.<phaseId>}} in step args to carry state across phases.",
+      poll_interval_ms:
+        "Delay between controller phases or re-checks; default 5000 ms, minimum 1000 ms.",
+      max_cycles: "Optional maximum complete loop cycles.",
+      end_at: "Optional ISO date/time after which the loop stops.",
+      loop_id: "Required for status/cancel/delete.",
+    },
+    dryRunPlan: (args) => ({
+      durable: true,
+      op: typeof args.op === "string" ? args.op : "create",
+      label: args.label ?? null,
+      phaseCount: Array.isArray(args.phases) ? args.phases.length : 0,
+      controller: "persistent_stateful_loop",
+      carrySyntax: ["{{loop.lastOutput}}", "{{loop.phase.<phaseId>}}"],
+      changeDetection: true,
+      survivesMcpRequest: true,
+      survivesRuntimeRestart: true,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "create";
+
+      if (operation === "list") {
+        return await listPersistentLoops();
+      }
+
+      if (["status", "cancel", "delete"].includes(operation)) {
+        const loopId = requiredText(args, "loop_id");
+        if (operation === "status") {
+          return await getPersistentLoop(loopId);
+        }
+        if (operation === "cancel") {
+          return await cancelPersistentLoop(loopId);
+        }
+        return await deletePersistentLoop(loopId);
+      }
+
+      if (operation !== "create") {
+        throw new Error(
+          'runtime.loop op must be "create", "list", "status", "cancel", or "delete".',
+        );
+      }
+
+      const label = requiredText(args, "label");
+      const phases = parseLoopPhases(args.phases);
+      return await createPersistentLoop({
+        label,
+        phases,
+        pollIntervalMs:
+          typeof args.poll_interval_ms === "number"
+            ? args.poll_interval_ms
+            : undefined,
+        maxCycles:
+          typeof args.max_cycles === "number" ? args.max_cycles : undefined,
+        endAt: typeof args.end_at === "string" ? args.end_at : undefined,
+        maxConcurrency:
+          typeof args.max_concurrency === "number"
+            ? args.max_concurrency
+            : undefined,
+        failFast: optionalBoolean(args, "fail_fast", true),
+        maxWaves:
+          typeof args.max_waves === "number" ? args.max_waves : undefined,
+        timeBudgetMs:
+          typeof args.time_budget_ms === "number"
+            ? args.time_budget_ms
+            : undefined,
       });
     },
   },
