@@ -62,6 +62,15 @@ import {
   executeActionGraph,
   planActionGraph,
 } from "./router/graphRouter.js";
+import {
+  cancelPersistentTask,
+  createPersistentTask,
+  getPersistentTaskStatus,
+  listPersistentTasks,
+  requestTaskPause,
+  resolvePersistentTaskStep,
+  runPersistentTask,
+} from "./tasks/taskRuntime.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -119,7 +128,7 @@ function fail(error: unknown) {
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.7.0",
+    version: "0.8.0",
   });
 
   server.tool(
@@ -784,7 +793,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.7.0",
+          version: "0.8.0",
           allowedDirectories: configuredRoots(),
           write: envFlag("ALLOW_WRITE", true),
           delete: envFlag("ALLOW_DELETE", false),
@@ -793,6 +802,7 @@ function createServer() {
           rollback: envFlag("ALLOW_ROLLBACK", false),
           browser: envFlag("ALLOW_BROWSER", false),
           gui: envFlag("ALLOW_GUI", false),
+          persistentTasks: true,
           auditLogEnabled: envFlag("AUDIT_LOG_ENABLED", true),
           auditLogPath: getAuditLogPath(),
         });
@@ -1453,6 +1463,203 @@ function createServer() {
     },
   );
 
+
+  server.tool(
+    "task_create",
+    "Create an encrypted persistent dependency-graph task that can be resumed after chat, tunnel, MCP server, or computer restarts. Task definitions and step outputs are stored locally with AES-256-GCM.",
+    {
+      label: z.string().min(1).max(200),
+      steps: z.array(
+        z.object({
+          id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+          action: z.string().min(1),
+          args: z.record(z.unknown()).optional(),
+          depends_on: z.array(z.string()).optional(),
+        }),
+      ).min(1).max(50),
+      max_concurrency: z.number().int().min(1).max(8).optional(),
+      fail_fast: z.boolean().optional(),
+    },
+    {
+      title: "Create Persistent Task",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ label, steps, max_concurrency, fail_fast }) => {
+      try {
+        return ok(
+          await createPersistentTask(
+            label,
+            steps.map((step) => ({
+              id: step.id,
+              action: step.action,
+              args: step.args,
+              dependsOn: step.depends_on,
+            })),
+            {
+              maxConcurrency: max_concurrency ?? 4,
+              failFast: fail_fast ?? true,
+            },
+          ),
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_list",
+    "List encrypted persistent tasks and their current progress. Interrupted tasks are recovered when discovered.",
+    {},
+    {
+      title: "List Persistent Tasks",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async () => {
+      try {
+        return ok(await listPersistentTasks());
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_status",
+    "Read one persistent task status. Set include_results=true to include stored step outputs needed for detailed inspection.",
+    {
+      task_id: z.string(),
+      include_results: z.boolean().optional(),
+    },
+    {
+      title: "Persistent Task Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ task_id, include_results }) => {
+      try {
+        return ok(
+          await getPersistentTaskStatus(task_id, include_results ?? false),
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_run",
+    "Run or resume a persistent task from its last durable checkpoint. Progress is saved after every execution wave. A time budget or max_waves can intentionally yield back to ChatGPT and continue later.",
+    {
+      task_id: z.string(),
+      max_concurrency: z.number().int().min(1).max(8).optional(),
+      fail_fast: z.boolean().optional(),
+      max_waves: z.number().int().min(1).max(1000).optional(),
+      time_budget_ms: z.number().int().min(1000).max(600000).optional(),
+    },
+    {
+      title: "Run Persistent Task",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ task_id, max_concurrency, fail_fast, max_waves, time_budget_ms }) => {
+      try {
+        return ok(
+          await runPersistentTask(task_id, {
+            maxConcurrency: max_concurrency,
+            failFast: fail_fast,
+            maxWaves: max_waves,
+            timeBudgetMs: time_budget_ms,
+          }),
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_pause",
+    "Request that a persistent task pause after its current execution wave, or pause it immediately when it is not actively running.",
+    { task_id: z.string() },
+    {
+      title: "Pause Persistent Task",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ task_id }) => {
+      try {
+        return ok(await requestTaskPause(task_id));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_cancel",
+    "Cancel a persistent task. If it is actively running, cancellation takes effect after the current execution wave.",
+    { task_id: z.string() },
+    {
+      title: "Cancel Persistent Task",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ task_id }) => {
+      try {
+        return ok(await cancelPersistentTask(task_id));
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
+  server.tool(
+    "task_resolve_step",
+    "Resolve a failed or interrupted state-changing task step. Use retry only after checking whether a previous attempt caused side effects; or mark_succeeded with an optional result after manual verification.",
+    {
+      task_id: z.string(),
+      step_id: z.string(),
+      resolution: z.enum(["retry", "mark_succeeded"]),
+      result: z.unknown().optional(),
+    },
+    {
+      title: "Resolve Persistent Task Step",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ task_id, step_id, resolution, result }) => {
+      try {
+        return ok(
+          await resolvePersistentTaskStep(
+            task_id,
+            step_id,
+            resolution,
+            result,
+          ),
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    },
+  );
+
   return server;
 }
 
@@ -1520,7 +1727,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.7.0",
+    version: "0.8.0",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1529,6 +1736,7 @@ app.get("/health", (_req, res) => {
       rollback: envFlag("ALLOW_ROLLBACK", false),
       browser: envFlag("ALLOW_BROWSER", false),
       gui: envFlag("ALLOW_GUI", false),
+      persistentTasks: true,
       auditLog: envFlag("AUDIT_LOG_ENABLED", true),
     },
   });
@@ -1536,5 +1744,5 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.7.0 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.8.0 listening on http://127.0.0.1:${port}/mcp`);
 });
