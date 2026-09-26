@@ -896,3 +896,18 @@ No new top-level MCP tool is required.
 Verification: `npm run verify:loop`.
 
 Architecture: [`docs/LOOP_CONTROLLER.md`](docs/LOOP_CONTROLLER.md)
+
+
+## v0.9.8 — Semantic Promotion Pipeline
+
+v0.9.8 implements explicit M2 Episodic → M3 Semantic promotion through the existing Skill runtime.
+
+New L2 Skill: `runtime.memory`.
+
+Operations: `status`, `inspect`, `promote`, `search`, `list`, `get`, and `delete`.
+
+Promotion requires a completed task with succeeded evidence, passes deterministic quality and privacy/secret gates, and requires `confirm=true`. Semantic records are AES-256-GCM encrypted under `~/.computer-mcp/semantic/` by default and retain provenance back to the source task. The source task receives a `semantic_promoted` event.
+
+Verification: `npm run verify:semantic-memory`.
+
+Architecture: [`docs/SEMANTIC_MEMORY.md`](docs/SEMANTIC_MEMORY.md)

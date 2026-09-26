@@ -1,6 +1,6 @@
 # AgentOS Runtime Memory & Staging
 
-Status: **v0.9.5 foundation**
+Status: **v0.9.8 foundation**
 
 AgentOS Runtime treats memory as a runtime plane beside the Primitive ISA, not as a replacement for the ISA.
 
@@ -108,27 +108,28 @@ This is currently task-local episodic memory. A future global episodic ledger ca
 
 Purpose: reusable facts, proven patterns, successful workflow strategies, promoted knowledge, and learned preferences/rules.
 
-Status in v0.9.5: not automatically implemented.
+Status in v0.9.8: implemented as an explicit, gated promotion pipeline.
 
-This is deliberate. AgentOS Runtime should not turn every execution trace into long-term knowledge. Failed, accidental, private, or one-off task details must not silently become semantic memory.
-
-Planned flow:
-
-    Task succeeds
+    completed Task + M2 evidence
         |
         v
-    Staging + Episodic evidence
+    Promotion Candidate
+        |
+        +--> Quality Gate
+        |
+        +--> Privacy / Secret Gate
         |
         v
-    quality / privacy / promotion gate
+    explicit promote(confirm=true)
         |
         v
-    explicit promotion
-        |
-        v
-    Semantic Memory
+    encrypted M3 Semantic Memory
 
-The old Owl Lab promote_from_stage idea is useful here, but the new Runtime should keep promotion explicit and auditable.
+The Runtime does not turn every execution trace into long-term knowledge. Failed, partial, accidental, or obvious credential-bearing candidates are blocked. Every promoted record keeps sourceTaskId, evidence step ids, event types, evidence/content digests, and gate receipts. The source Task receives a semantic_promoted event so provenance is bidirectional.
+
+Current M3 retrieval is deterministic lexical search. Embedding/vector retrieval can be added later without changing the L1 ISA or the promotion contract.
+
+See SEMANTIC_MEMORY.md.
 
 ## Complex Tasks
 
@@ -260,7 +261,7 @@ Future options include encrypted dormant staging, sensitivity labels, TTL/garbag
     complete / pause / recover
        |
        v
-    optional future promotion         (Semantic)
+    explicit gated promotion          (Semantic)
 
 ## v1 direction
 
@@ -268,8 +269,8 @@ Before AgentOS Runtime v1.0:
 
 1. Define the durable Skill compiler contract.
 2. Add global episodic indexing/search.
-3. Add semantic promotion with explicit quality/privacy gates.
+3. Improve semantic retrieval beyond lexical matching while preserving provenance.
 4. Add staging TTL, selection/finalization, and garbage collection.
 5. Add artifact sensitivity and retention metadata.
-6. Add memory conformance tests.
+6. Expand memory conformance tests and promotion policy fixtures.
 7. Keep memory APIs outside the frozen core ISA unless a truly provider-independent memory Primitive proves necessary.

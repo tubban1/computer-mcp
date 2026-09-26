@@ -271,3 +271,21 @@ MCP server name:   computer-mcp
 This avoids breaking existing tunnels, plugin connections, scripts, documentation links, and local installations while the architecture stabilizes.
 
 A repository/package rename can be evaluated at the 1.0 boundary.
+
+
+### v0.9.8 — Semantic Promotion Pipeline
+
+v0.9.8 closes the first executable M2 Episodic → M3 Semantic path.
+
+- completed task episodes become promotion evidence
+- Quality Gate rejects incomplete or unresolved task evidence
+- Privacy / Secret Gate blocks obvious credential-bearing candidates
+- promotion requires an explicit confirm=true operation
+- M3 records are AES-256-GCM encrypted in runtime-owned storage
+- every record keeps source task/evidence hashes and gate receipts
+- the source task receives a semantic_promoted episodic event
+- semantic memory supports status/search/list/get/delete through runtime.memory
+
+No new L1 Primitive or top-level MCP tool is required.
+
+Architecture: SEMANTIC_MEMORY.md

@@ -33,6 +33,18 @@ import {
   listPersistentLoops,
 } from "../runtime/loopController.js";
 import type { LoopPhase } from "../runtime/loopStore.js";
+import {
+  getSemanticMemory,
+  inspectPromotionCandidate,
+  promoteSemanticMemory,
+  removeSemanticMemory,
+  searchSemanticMemories,
+  semanticMemoryStatus,
+} from "../runtime/memoryPromotion.js";
+import type {
+  SemanticMemoryKind,
+  SemanticSensitivity,
+} from "../runtime/semanticStore.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -101,6 +113,18 @@ const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
     executionMode: "durable",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.memory": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "inline",
     memoryPolicy: {
       working: "runtime",
       staging: "available_when_durable",
@@ -411,6 +435,33 @@ function parseLoopPhases(raw: unknown): LoopPhase[] {
   });
 }
 
+function parseSemanticKind(value: unknown): SemanticMemoryKind {
+  const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!["fact", "preference", "procedure", "pattern", "decision"].includes(kind)) {
+    throw new Error(
+      'kind must be "fact", "preference", "procedure", "pattern", or "decision".',
+    );
+  }
+  return kind as SemanticMemoryKind;
+}
+
+function parseSemanticSensitivity(value: unknown): SemanticSensitivity {
+  const sensitivity =
+    typeof value === "string" && value.trim()
+      ? value.trim().toLowerCase()
+      : "internal";
+  if (!["public", "internal", "private"].includes(sensitivity)) {
+    throw new Error('sensitivity must be "public", "internal", or "private".');
+  }
+  return sensitivity as SemanticSensitivity;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
 function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
@@ -468,6 +519,15 @@ const LOOP_CONTRACT: SkillContract = {
     "persistent_task_creation",
     "repeated_external_interaction",
   ],
+  requiresVerification: true,
+  retryPolicy: "manual",
+  resources: [],
+};
+
+const MEMORY_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: false,
+  sideEffects: ["long_term_memory_mutation"],
   requiresVerification: true,
   retryPolicy: "manual",
   resources: [],
@@ -765,6 +825,114 @@ const skills: SkillDefinition[] = [
             ? args.time_budget_ms
             : undefined,
       });
+    },
+  },
+  {
+    id: "runtime.memory",
+    domain: "runtime",
+    description:
+      "Inspect promotion candidates and explicitly promote completed task evidence from M2 Episodic Memory into encrypted M3 Semantic Memory.",
+    keywords: [
+      "memory",
+      "semantic memory",
+      "episodic memory",
+      "promote",
+      "remember",
+      "长期记忆",
+      "语义记忆",
+      "经验",
+      "晋升",
+    ],
+    contract: MEMORY_CONTRACT,
+    inputs: {
+      op:
+        "status | inspect | promote | search | list | get | delete. Default: status.",
+      task_id: "Source completed persistent task for inspect/promote.",
+      kind: "fact | preference | procedure | pattern | decision.",
+      title: "Short semantic-memory title.",
+      content:
+        "Distilled reusable knowledge. Promotion gates reject incomplete evidence and obvious credential/token patterns.",
+      tags: "Optional string tags.",
+      sensitivity: "public | internal | private. Default: internal.",
+      evidence_step_ids:
+        "Optional succeeded task-step ids. Defaults to all succeeded steps.",
+      confirm:
+        "Must be true for promote. inspect never writes long-term memory.",
+      query: "Lexical semantic-memory search query.",
+      memory_id: "Required for get/delete.",
+      limit: "Search/list result limit; default 20, max 100.",
+    },
+    dryRunPlan: (args) => ({
+      op: typeof args.op === "string" ? args.op : "status",
+      sourceTaskId: args.task_id ?? null,
+      semanticKind: args.kind ?? null,
+      sensitivity: args.sensitivity ?? "internal",
+      explicitPromotionRequired: true,
+      gates: ["task_completion", "evidence", "quality", "secret_privacy"],
+      storage: "encrypted_runtime_owned",
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "status";
+
+      if (operation === "status") {
+        return await semanticMemoryStatus();
+      }
+
+      if (operation === "search" || operation === "list") {
+        const kind =
+          typeof args.kind === "string" && args.kind.trim()
+            ? parseSemanticKind(args.kind)
+            : undefined;
+        return await searchSemanticMemories(
+          operation === "list"
+            ? ""
+            : typeof args.query === "string"
+              ? args.query
+              : "",
+          {
+            ...(kind ? { kind } : {}),
+            tags: stringArray(args.tags),
+            limit:
+              typeof args.limit === "number"
+                ? args.limit
+                : 20,
+          },
+        );
+      }
+
+      if (operation === "get") {
+        return await getSemanticMemory(requiredText(args, "memory_id"));
+      }
+
+      if (operation === "delete") {
+        return await removeSemanticMemory(requiredText(args, "memory_id"));
+      }
+
+      if (operation === "inspect" || operation === "promote") {
+        const input = {
+          taskId: requiredText(args, "task_id"),
+          kind: parseSemanticKind(args.kind),
+          title: requiredText(args, "title"),
+          content: requiredText(args, "content"),
+          tags: stringArray(args.tags),
+          sensitivity: parseSemanticSensitivity(args.sensitivity),
+          evidenceStepIds: stringArray(args.evidence_step_ids),
+        };
+
+        if (operation === "inspect") {
+          return await inspectPromotionCandidate(input);
+        }
+
+        return await promoteSemanticMemory({
+          ...input,
+          confirm: optionalBoolean(args, "confirm", false),
+        });
+      }
+
+      throw new Error(
+        'runtime.memory op must be "status", "inspect", "promote", "search", "list", "get", or "delete".',
+      );
     },
   },
   {
@@ -1870,6 +2038,8 @@ export async function getCapabilityManifest(goal = "") {
       },
       persistentTasks: "v0.8 + v0.9.5 Primitive-task path",
       persistentScheduler: "v0.9.6 wake scheduler + scheduled Primitive graphs",
+      persistentLoopController: "v0.9.7 stateful multi-phase loops",
+      semanticPromotion: "v0.9.8 explicit M2 → gate → M3 pipeline",
       dependencyGraph: "v0.7",
       providerRouter: "v0.6",
       providers: "v0.5",

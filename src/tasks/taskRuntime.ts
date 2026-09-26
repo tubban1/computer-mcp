@@ -147,8 +147,9 @@ function summarizeTask(task: PersistentTask, includeResults = false) {
       },
       semantic: {
         description:
-          "Long-term promoted knowledge/pattern memory is a separate AgentOS Runtime plane and is not yet auto-promoted.",
-        available: false,
+          "Long-term M3 semantic memory is available through explicit, gated promotion from completed task evidence.",
+        available: true,
+        promotionMode: "explicit",
       },
     },
     staging: {

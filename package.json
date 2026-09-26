@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "verify:skill-abi": "tsx scripts/verify-skill-abi.ts",
     "verify:task-memory": "tsx scripts/verify-task-memory.ts",
     "verify:scheduler": "tsx scripts/verify-scheduler.ts",
-    "verify:loop": "tsx scripts/verify-loop.ts"
+    "verify:loop": "tsx scripts/verify-loop.ts",
+    "verify:semantic-memory": "tsx scripts/verify-semantic-memory.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

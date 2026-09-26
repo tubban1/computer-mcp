@@ -228,7 +228,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.7",
+    version: "0.9.8",
   });
 
   server.tool(
@@ -893,7 +893,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.7",
+          version: "0.9.8",
           allowedDirectories: configuredRoots(),
           runtimeOwnedDirectories: runtimeOwnedRoots(),
           write: envFlag("ALLOW_WRITE", true),
@@ -906,6 +906,10 @@ function createServer() {
           persistentTasks: true,
           persistentScheduler: true,
           scheduledPrimitiveGraphs: true,
+          persistentLoopController: true,
+          crossPhaseCarryState: true,
+          semanticMemory: true,
+          semanticPromotion: true,
           taskStaging: true,
           durablePrimitiveTasks: true,
           primitiveAbi: true,
@@ -1984,7 +1988,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.7",
+    version: "0.9.8",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1998,6 +2002,8 @@ app.get("/health", (_req, res) => {
       scheduledPrimitiveGraphs: true,
       persistentLoopController: true,
       crossPhaseCarryState: true,
+      semanticMemory: true,
+      semanticPromotion: true,
       taskStaging: true,
       durablePrimitiveTasks: true,
       primitiveAbi: true,
@@ -2018,5 +2024,5 @@ const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
   console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
   console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
-  console.log(`computer-mcp v0.9.7 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`computer-mcp v0.9.8 listening on http://127.0.0.1:${port}/mcp`);
 });
