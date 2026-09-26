@@ -126,24 +126,19 @@ async function loadOrCreateKey(): Promise<Buffer> {
   }
 
   const key = randomBytes(32);
-  const tempPath = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, key.toString("base64") + "\n", {
-    encoding: "utf8",
-    mode: 0o600,
-    flag: "wx",
-  });
-
   try {
-    await fs.rename(tempPath, keyPath);
+    await fs.writeFile(keyPath, key.toString("base64") + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await fs.chmod(keyPath, 0o600).catch(() => undefined);
+    return key;
   } catch (error) {
-    await fs.rm(tempPath, { force: true }).catch(() => undefined);
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") return await loadOrCreateKey();
     throw error;
   }
-
-  await fs.chmod(keyPath, 0o600).catch(() => undefined);
-  return key;
 }
 
 function taskPath(id: string): string {
