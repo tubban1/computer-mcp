@@ -10,13 +10,14 @@ New tools:
 
 - `task_create`
 - `task_list`
+- `task_delete`
 - `task_status`
 - `task_run`
 - `task_pause`
 - `task_cancel`
 - `task_resolve_step`
 
-Tool count: **62**
+Tool count: **63**
 
 ## Persistent execution model
 
