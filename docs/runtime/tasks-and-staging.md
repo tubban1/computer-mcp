@@ -129,7 +129,7 @@ The Runtime does not turn every execution trace into long-term knowledge. Failed
 
 v0.9.9 M3 retrieval supports lexical, local-vector, and hybrid modes. The current local vectorizer is deterministic feature hashing rather than a neural embedding model, and can be replaced later without changing the L1 ISA or promotion provenance contract.
 
-See SEMANTIC_MEMORY.md.
+See [Semantic memory](memory/semantic-memory.md).
 
 ## Complex Tasks
 

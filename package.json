@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx watch src/server.ts",
+    "dev": "PORT=${PORT:-8788} AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx watch src/server.ts",
+    "dev:isolated": "npm run dev",
     "build": "tsc -p tsconfig.json",
     "start": "AGENTOS_RUNTIME_MODE=production node dist/server.js",
-    "start:source": "AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx src/server.ts",
+    "start:source": "PORT=${PORT:-8788} AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "verify:isa": "tsx scripts/verify-primitive-isa.ts",
     "verify:skill-abi": "tsx scripts/verify-skill-abi.ts",

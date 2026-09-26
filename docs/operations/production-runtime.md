@@ -77,7 +77,7 @@ The production entry point is:
 node <release>/dist/server.js
 ```
 
-not a source watcher.
+not a source watcher. Production normally owns port `8787`; source development defaults to `8788`.
 
 ## Environment
 

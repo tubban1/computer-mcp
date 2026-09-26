@@ -221,9 +221,9 @@ v0.9.5 adds the durable-memory foundation:
 - Skill metadata declares version, Primitive ABI requirements, execution mode, and memory policy
 - Semantic Memory uses explicit gated promotion rather than implicit auto-learning; v0.9.9 adds unified recall across global M2 and M3.
 
-Memory architecture: MEMORY_AND_STAGING.md
+Memory architecture: [../runtime/tasks-and-staging.md](../runtime/tasks-and-staging.md)
 
-Skill ABI: SKILL_ABI.md
+Skill ABI: [../specifications/skill-abi.md](../specifications/skill-abi.md)
 
 v0.9.6 adds the persistent wake/scheduler foundation:
 
@@ -235,7 +235,7 @@ v0.9.6 adds the persistent wake/scheduler foundation:
 - due schedules are picked up again after Runtime restart
 - no new top-level MCP tool or schema refresh is required
 
-Scheduler architecture: SCHEDULER_AND_WAKE.md
+Scheduler architecture: [../runtime/scheduler-and-wake.md](../runtime/scheduler-and-wake.md)
 
 ### v1.0 readiness
 
@@ -288,7 +288,7 @@ v0.9.8 closes the first executable M2 Episodic → M3 Semantic path.
 
 No new L1 Primitive or top-level MCP tool is required.
 
-Architecture: SEMANTIC_MEMORY.md
+Architecture: [../runtime/memory/semantic-memory.md](../runtime/memory/semantic-memory.md)
 
 
 ### v0.9.9 — Global Recall, Durable Agent Sessions & Runtime Identity
@@ -320,7 +320,7 @@ The Runtime also adds a durable WeChat Session Endpoint. Background CGWindow cap
 
 Browser-agent and WeChat bindings now share the Session Endpoint abstraction used by Persistent Loop. Session phases support `identify`, `probe`, `capture_latest` and `send`.
 
-See `docs/EMBEDDING_PROVIDER.md` and `docs/WECHAT_SESSION_ADAPTER.md`.
+See [Embedding Provider](../specifications/embedding-provider.md) and [WeChat adapter](../adapters/wechat.md).
 
 
 ### v0.9.11 — Concurrency Ownership & Production Runtime
@@ -358,8 +358,8 @@ v0.9.11 also fixes same-file `batch_edit_files` composition so multiple ordered 
 
 See:
 
-- `docs/CONCURRENCY_AND_OWNERSHIP.md`
-- `docs/PRODUCTION_RUNTIME.md`
+- [Concurrency and ownership](concurrency-and-ownership.md)
+- [Production Runtime](../operations/production-runtime.md)
 
 Verification:
 

@@ -6,17 +6,25 @@ AgentOS Runtime is a personal computer-agent execution runtime for ChatGPT. It e
 
 `v0.8.0` is preserved as the last stable **pre-AgentOS** release for users who prefer the simpler direct-MCP-tool architecture. Starting with `v0.9`, the project evolves as **AgentOS Runtime** while keeping the `computer-mcp` repository/package name for compatibility.
 
-Architecture and 1.0 criteria: [`docs/AGENTOS_RUNTIME.md`](docs/AGENTOS_RUNTIME.md)
+Documentation hub: [`docs/README.md`](docs/README.md)
 
-L1 Primitive ISA review: [`docs/L1_PRIMITIVE_ISA_REVIEW.md`](docs/L1_PRIMITIVE_ISA_REVIEW.md)
+Architecture overview: [`docs/architecture/overview.md`](docs/architecture/overview.md)
 
-Memory & staging model: [`docs/MEMORY_AND_STAGING.md`](docs/MEMORY_AND_STAGING.md)
+Roadmap to 1.0: [`docs/roadmap/v1.0.md`](docs/roadmap/v1.0.md)
 
-Skill ABI: [`docs/SKILL_ABI.md`](docs/SKILL_ABI.md)
+L1 Primitive ISA review: [`docs/archive/l1-primitive-isa-review.md`](docs/archive/l1-primitive-isa-review.md)
 
-Concurrency & durable ownership: [`docs/CONCURRENCY_AND_OWNERSHIP.md`](docs/CONCURRENCY_AND_OWNERSHIP.md)
+Memory & staging model: [`docs/runtime/tasks-and-staging.md`](docs/runtime/tasks-and-staging.md)
 
-Production Runtime: [`docs/PRODUCTION_RUNTIME.md`](docs/PRODUCTION_RUNTIME.md)
+Skill ABI: [`docs/specifications/skill-abi.md`](docs/specifications/skill-abi.md)
+
+Concurrency & durable ownership: [`docs/architecture/concurrency-and-ownership.md`](docs/architecture/concurrency-and-ownership.md)
+
+Production Runtime: [`docs/operations/production-runtime.md`](docs/operations/production-runtime.md)
+
+### Running Jarvis
+
+For normal daily use, install Production once with `npm run install:production`; launchd then starts Jarvis automatically. Do **not** run `npm run dev` for normal use. `npm run dev` is only for AgentOS source development and now defaults to port `8788` with `~/.computer-mcp-dev`, while Production normally uses port `8787` with `~/.computer-mcp`.
 
 ## v0.9 — Primitive & Skill Runtime
 
@@ -883,7 +891,7 @@ Verification:
 
     npm run verify:scheduler
 
-Architecture: [`docs/SCHEDULER_AND_WAKE.md`](docs/SCHEDULER_AND_WAKE.md)
+Architecture: [`docs/runtime/scheduler-and-wake.md`](docs/runtime/scheduler-and-wake.md)
 
 ## v0.9.7 — Persistent Loop Controller
 
@@ -899,7 +907,7 @@ No new top-level MCP tool is required.
 
 Verification: `npm run verify:loop`.
 
-Architecture: [`docs/LOOP_CONTROLLER.md`](docs/LOOP_CONTROLLER.md)
+Architecture: [`docs/runtime/loop-controller.md`](docs/runtime/loop-controller.md)
 
 
 ## v0.9.8 — Semantic Promotion Pipeline
@@ -914,7 +922,7 @@ Promotion requires a completed task with succeeded evidence, passes deterministi
 
 Verification: `npm run verify:semantic-memory`.
 
-Architecture: [`docs/SEMANTIC_MEMORY.md`](docs/SEMANTIC_MEMORY.md)
+Architecture: [`docs/runtime/memory/semantic-memory.md`](docs/runtime/memory/semantic-memory.md)
 
 
 ## v0.9.9 — Global Recall, Durable Agent Sessions & Runtime Identity
@@ -949,10 +957,10 @@ npm run verify:identity
 
 Architecture:
 
-- [Global Episodic Recall](docs/EPISODIC_RECALL.md)
-- [Session Adapter Contract](docs/SESSION_ADAPTERS.md)
-- [Runtime Identity](docs/RUNTIME_IDENTITY.md)
-- [Persistent Loop Controller](docs/LOOP_CONTROLLER.md)
+- [Global Episodic Recall](docs/runtime/memory/episodic-recall.md)
+- [Session Adapter Contract](docs/specifications/session-adapter.md)
+- [Runtime Identity](docs/architecture/runtime-identity.md)
+- [Persistent Loop Controller](docs/runtime/loop-controller.md)
 
 
 ## v0.9.10 — Embedding Provider ABI & Persistent WeChat Sessions
@@ -987,5 +995,5 @@ npm run verify:macos-helper
 
 Architecture:
 
-- [Embedding Provider Contract](docs/EMBEDDING_PROVIDER.md)
-- [Persistent WeChat Session Adapter](docs/WECHAT_SESSION_ADAPTER.md)
+- [Embedding Provider Contract](docs/specifications/embedding-provider.md)
+- [Persistent WeChat Session Adapter](docs/adapters/wechat.md)
