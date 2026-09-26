@@ -30,7 +30,7 @@ A Primitive describes a capability such as fs.read, web.query, pointer.click, cl
 
 This keeps L1 stable, replayable, composable, testable, and provider-independent. Complex Skills and Tasks receive memory through Runtime context.
 
-## L1 — Task Working Memory
+## M0 — Task Working Memory
 
 Purpose: current task state, succeeded step outputs, dependency values, and variables passed between steps.
 
@@ -51,7 +51,7 @@ Example:
 
 This is intentionally task-scoped, not global memory.
 
-## L1.5 — Staging / Artifact Memory
+## M1 — Staging / Artifact Memory
 
 Purpose: preserve intermediate files, separate transient assets from final outputs, make complex multi-step tasks resumable, and avoid putting large binaries directly into encrypted JSON task state.
 
@@ -90,7 +90,7 @@ The runtime-owned staging directory can be exposed to filesystem/browser Primiti
 
 This allows a later step to upload, read, transcode, inspect, or publish an intermediate artifact after the producer step has finished.
 
-## L2 — Episodic Memory
+## M2 — Episodic Memory
 
 Purpose: what happened, when it happened, attempts/retries, failures, recovery decisions, execution durations, and task lifecycle.
 
@@ -104,7 +104,7 @@ Current implementation:
 
 This is currently task-local episodic memory. A future global episodic ledger can index completed tasks across time without changing the Primitive ISA.
 
-## L3 — Semantic Memory
+## M3 — Semantic Memory
 
 Purpose: reusable facts, proven patterns, successful workflow strategies, promoted knowledge, and learned preferences/rules.
 

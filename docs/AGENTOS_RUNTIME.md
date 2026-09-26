@@ -225,6 +225,18 @@ Memory architecture: MEMORY_AND_STAGING.md
 
 Skill ABI: SKILL_ABI.md
 
+v0.9.6 adds the persistent wake/scheduler foundation:
+
+- schedules are encrypted durable Runtime state, separate from the L1 ISA
+- `runtime.schedule` creates once, interval, or daily wake plans through the existing `skill_run` surface
+- each occurrence creates/resumes a Persistent Primitive Task
+- yielded tasks resume on a later wake instead of requiring one multi-hour MCP request
+- result-based `stop_when`, `max_runs`, and `end_at` bound monitoring loops
+- due schedules are picked up again after Runtime restart
+- no new top-level MCP tool or schema refresh is required
+
+Scheduler architecture: SCHEDULER_AND_WAKE.md
+
 ### v1.0 readiness
 
 AgentOS Runtime should not be called 1.0 until these are stable:
@@ -234,7 +246,7 @@ AgentOS Runtime should not be called 1.0 until these are stable:
 3. Action Contract semantics stable.
 4. Resource arbitration supports leases/timeouts and deadlock-safe composition.
 5. Durable Skills can compile into persistent task graphs.
-6. Scheduler/event/wake model is defined.
+6. Persistent scheduler/wake semantics are stable; event triggers and stateful Loop Controller semantics are defined.
 7. Capability discovery is dynamic and does not require MCP schema refresh for ordinary new Skills.
 8. Provider diagnostics and permission reporting are standardized.
 9. End-to-end conformance tests exist for each Primitive family.

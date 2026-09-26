@@ -87,6 +87,7 @@ import {
   getCapabilityManifest,
   getSkillCatalog,
 } from "./skills/skillRuntime.js";
+import { startPersistentScheduler } from "./runtime/scheduler.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -226,7 +227,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.5",
+    version: "0.9.6",
   });
 
   server.tool(
@@ -891,7 +892,7 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.5",
+          version: "0.9.6",
           allowedDirectories: configuredRoots(),
           runtimeOwnedDirectories: runtimeOwnedRoots(),
           write: envFlag("ALLOW_WRITE", true),
@@ -902,6 +903,8 @@ function createServer() {
           browser: envFlag("ALLOW_BROWSER", false),
           gui: envFlag("ALLOW_GUI", false),
           persistentTasks: true,
+          persistentScheduler: true,
+          scheduledPrimitiveGraphs: true,
           taskStaging: true,
           durablePrimitiveTasks: true,
           primitiveAbi: true,
@@ -1891,7 +1894,7 @@ function createServer() {
 
   server.tool(
     "skill_run",
-    "Run an AgentOS Runtime Skill such as runtime.compile_task, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Durable Skills may compile Primitive graphs into persistent tasks; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.",
+    "Run an AgentOS Runtime Skill such as runtime.compile_task, runtime.schedule, wechat.read, wechat.send, xhs.publish, email.compose, or media.transcode. Durable Skills may compile Primitive graphs or persistent wake schedules; consequential app Skills remain preparation-only unless their explicit send/publish flag is true.",
     {
       skill: z.string().min(1),
       args: z.record(z.unknown()).optional(),
@@ -1980,7 +1983,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.5",
+    version: "0.9.6",
     capabilities: {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
@@ -1990,6 +1993,8 @@ app.get("/health", (_req, res) => {
       browser: envFlag("ALLOW_BROWSER", false),
       gui: envFlag("ALLOW_GUI", false),
       persistentTasks: true,
+      persistentScheduler: true,
+      scheduledPrimitiveGraphs: true,
       taskStaging: true,
       durablePrimitiveTasks: true,
       primitiveAbi: true,
@@ -2004,7 +2009,9 @@ app.get("/health", (_req, res) => {
   });
 });
 
+const scheduler = startPersistentScheduler();
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, "127.0.0.1", () => {
-  console.log(`computer-mcp v0.9.5 listening on http://127.0.0.1:${port}/mcp`);
+  console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
+  console.log(`computer-mcp v0.9.6 listening on http://127.0.0.1:${port}/mcp`);
 });

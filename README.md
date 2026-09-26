@@ -842,3 +842,41 @@ Verification:
     npm run verify:task-memory
 
 The task-memory verifier creates a real Primitive task, stages an intermediate file, reads the staged copy from a downstream Primitive through $ref, verifies Working/Episodic state, and cleans up the smoke task.
+
+## v0.9.6 — Persistent Scheduler & Wake
+
+v0.9.6 adds durable time-based execution above the Primitive ISA without adding a new top-level MCP tool.
+
+New L2 Skill:
+
+    runtime.schedule
+
+Supported persistent triggers:
+
+    once
+    interval
+    daily (host-local HH:MM)
+
+Each occurrence creates or resumes a Persistent Primitive Task. Schedule records are AES-256-GCM encrypted under `~/.computer-mcp/schedules/` by default.
+
+This enables workflows such as:
+
+- poll a CI/deployment every N seconds for 30 minutes, 3 hours, or longer
+- stop automatically when `stop_when` matches a task result
+- collect information every day from web/Git/local sources reachable by existing Primitives
+- resume overdue schedules after the Runtime restarts
+
+One task execution slice still has a maximum 10-minute budget, but that is no longer a total workflow-duration limit. Yielded tasks retain their state and are resumed by a later scheduler wake.
+
+No MCP schema refresh is required because schedule control is exposed through the existing `skill_run` tool:
+
+    skill_run("runtime.schedule", { op: "create", ... })
+    skill_run("runtime.schedule", { op: "list" })
+    skill_run("runtime.schedule", { op: "status", schedule_id: "..." })
+    skill_run("runtime.schedule", { op: "cancel", schedule_id: "..." })
+
+Verification:
+
+    npm run verify:scheduler
+
+Architecture: [`docs/SCHEDULER_AND_WAKE.md`](docs/SCHEDULER_AND_WAKE.md)

@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,14 +9,15 @@
     "typecheck": "tsc --noEmit",
     "verify:isa": "tsx scripts/verify-primitive-isa.ts",
     "verify:skill-abi": "tsx scripts/verify-skill-abi.ts",
-    "verify:task-memory": "tsx scripts/verify-task-memory.ts"
+    "verify:task-memory": "tsx scripts/verify-task-memory.ts",
+    "verify:scheduler": "tsx scripts/verify-scheduler.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
-    "zod": "^3.25.76",
-    "playwright-core": "^1.63.0"
+    "playwright-core": "^1.63.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",

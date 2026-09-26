@@ -369,11 +369,9 @@ export async function createPersistentTask(
   return summarizeTask(task, false);
 }
 
-export async function createPersistentPrimitiveTask(
-  label: string,
+export function validatePrimitiveTaskSteps(
   steps: PrimitiveTaskStep[],
-  options?: { maxConcurrency?: number; failFast?: boolean },
-) {
+): ReturnType<typeof planActionGraph> {
   if (steps.length === 0) {
     throw new Error("Persistent Primitive task requires at least one step.");
   }
@@ -381,7 +379,16 @@ export async function createPersistentPrimitiveTask(
     throw new Error("Persistent Primitive task accepts at most 50 steps.");
   }
 
+  const seen = new Set<string>();
   const routedSteps: GraphStep[] = steps.map((step) => {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(step.id)) {
+      throw new Error(`Invalid Primitive task step id "${step.id}".`);
+    }
+    if (seen.has(step.id)) {
+      throw new Error(`Duplicate Primitive task step id "${step.id}".`);
+    }
+    seen.add(step.id);
+
     const routed = routePrimitive(step.primitive, step.op, step.args ?? {});
     return {
       id: step.id,
@@ -400,6 +407,15 @@ export async function createPersistentPrimitiveTask(
         .join("\n"),
     );
   }
+  return plan;
+}
+
+export async function createPersistentPrimitiveTask(
+  label: string,
+  steps: PrimitiveTaskStep[],
+  options?: { maxConcurrency?: number; failFast?: boolean },
+) {
+  const plan = validatePrimitiveTaskSteps(steps);
 
   const now = new Date().toISOString();
   const id = newTaskId();

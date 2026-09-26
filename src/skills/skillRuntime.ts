@@ -14,6 +14,17 @@ import {
   createPersistentPrimitiveTask,
   type PrimitiveTaskStep,
 } from "../tasks/taskRuntime.js";
+import {
+  cancelPersistentSchedule,
+  createPrimitiveSchedule,
+  deletePersistentSchedule,
+  getPersistentSchedule,
+  listPersistentSchedules,
+} from "../runtime/scheduler.js";
+import type {
+  ScheduleStopWhen,
+  ScheduleTrigger,
+} from "../runtime/schedulerStore.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -54,6 +65,18 @@ type SkillRuntimeMetadata = {
 
 const SKILL_RUNTIME_METADATA: Record<string, SkillRuntimeMetadata> = {
   "runtime.compile_task": {
+    skillVersion: "0.1.0",
+    requiredPrimitiveAbi: 1,
+    requiredPrimitives: [],
+    executionMode: "durable",
+    memoryPolicy: {
+      working: "runtime",
+      staging: "available_when_durable",
+      episodic: "task_events_when_durable",
+      semanticPromotion: "manual",
+    },
+  },
+  "runtime.schedule": {
     skillVersion: "0.1.0",
     requiredPrimitiveAbi: 1,
     requiredPrimitives: [],
@@ -198,6 +221,138 @@ function requiredNumber(args: JsonObject, key: string): number {
   return value;
 }
 
+function parsePrimitiveTaskSteps(
+  raw: unknown,
+  owner: string,
+): PrimitiveTaskStep[] {
+  const rawSteps = Array.isArray(raw) ? raw : [];
+  if (rawSteps.length === 0) {
+    throw new Error(`${owner} requires at least one Primitive step.`);
+  }
+  if (rawSteps.length > 50) {
+    throw new Error(`${owner} accepts at most 50 Primitive steps.`);
+  }
+
+  return rawSteps.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Invalid Primitive task step at index ${index}.`);
+    }
+    const value = item as Record<string, unknown>;
+    const id = typeof value.id === "string" ? value.id.trim() : "";
+    const primitive =
+      typeof value.primitive === "string" ? value.primitive.trim() : "";
+    const op = typeof value.op === "string" ? value.op.trim() : "";
+
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+      throw new Error(
+        `Invalid Primitive task step id at index ${index}: "${id}".`,
+      );
+    }
+    if (!primitive) throw new Error(`Missing primitive for task step "${id}".`);
+    if (!op) throw new Error(`Missing op for task step "${id}".`);
+
+    const stepArgs =
+      value.args && typeof value.args === "object" && !Array.isArray(value.args)
+        ? (value.args as JsonObject)
+        : {};
+    const dependsOnRaw = Array.isArray(value.depends_on)
+      ? value.depends_on
+      : Array.isArray(value.dependsOn)
+        ? value.dependsOn
+        : [];
+    const dependsOn = dependsOnRaw.filter(
+      (dependency): dependency is string => typeof dependency === "string",
+    );
+
+    return { id, primitive, op, args: stepArgs, dependsOn };
+  });
+}
+
+function parseScheduleTrigger(args: JsonObject): ScheduleTrigger {
+  const raw =
+    args.trigger && typeof args.trigger === "object" && !Array.isArray(args.trigger)
+      ? (args.trigger as Record<string, unknown>)
+      : args;
+  const kind =
+    typeof raw.kind === "string"
+      ? raw.kind
+      : typeof raw.trigger_kind === "string"
+        ? raw.trigger_kind
+        : "";
+
+  if (kind === "once") {
+    const at =
+      typeof raw.at === "string"
+        ? raw.at
+        : typeof raw.start_at === "string"
+          ? raw.start_at
+          : "";
+    if (!at) throw new Error("once schedule requires trigger.at.");
+    return { kind: "once", at };
+  }
+
+  if (kind === "interval") {
+    const every =
+      typeof raw.every_ms === "number"
+        ? raw.every_ms
+        : typeof raw.everyMs === "number"
+          ? raw.everyMs
+          : typeof args.every_ms === "number"
+            ? args.every_ms
+            : undefined;
+    if (every === undefined) {
+      throw new Error("interval schedule requires every_ms.");
+    }
+    const startAt =
+      typeof raw.start_at === "string"
+        ? raw.start_at
+        : typeof raw.startAt === "string"
+          ? raw.startAt
+          : optionalBoolean(args, "start_immediately", false)
+            ? new Date().toISOString()
+            : undefined;
+    return {
+      kind: "interval",
+      everyMs: every,
+      ...(startAt ? { startAt } : {}),
+    };
+  }
+
+  if (kind === "daily") {
+    const time =
+      typeof raw.time === "string"
+        ? raw.time
+        : typeof raw.daily_at === "string"
+          ? raw.daily_at
+          : typeof args.daily_at === "string"
+            ? args.daily_at
+            : "";
+    if (!time) throw new Error('daily schedule requires local time "HH:MM".');
+    return { kind: "daily", time };
+  }
+
+  throw new Error('trigger.kind must be "once", "interval", or "daily".');
+}
+
+function parseStopWhen(args: JsonObject): ScheduleStopWhen | undefined {
+  const raw =
+    args.stop_when &&
+    typeof args.stop_when === "object" &&
+    !Array.isArray(args.stop_when)
+      ? (args.stop_when as Record<string, unknown>)
+      : null;
+  if (!raw) return undefined;
+
+  const ref = typeof raw.ref === "string" ? raw.ref.trim() : "";
+  if (!ref) throw new Error("stop_when.ref is required.");
+  const stop: ScheduleStopWhen = { ref };
+  if (Object.prototype.hasOwnProperty.call(raw, "equals")) {
+    stop.equals = raw.equals;
+  }
+  if (typeof raw.truthy === "boolean") stop.truthy = raw.truthy;
+  return stop;
+}
+
 function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
@@ -235,6 +390,15 @@ const DURABLE_TASK_CONTRACT: SkillContract = {
   sideEffects: ["persistent_task_creation", "staging_creation"],
   requiresVerification: false,
   retryPolicy: "automatic",
+  resources: [],
+};
+
+const SCHEDULER_CONTRACT: SkillContract = {
+  riskLevel: "medium",
+  idempotent: false,
+  sideEffects: ["schedule_mutation", "persistent_task_creation"],
+  requiresVerification: false,
+  retryPolicy: "manual",
   resources: [],
 };
 
@@ -338,54 +502,7 @@ const skills: SkillDefinition[] = [
     }),
     run: async (args) => {
       const label = requiredText(args, "label");
-      const rawSteps = Array.isArray(args.steps) ? args.steps : [];
-      if (rawSteps.length === 0) {
-        throw new Error("runtime.compile_task requires at least one Primitive step.");
-      }
-      if (rawSteps.length > 50) {
-        throw new Error("runtime.compile_task accepts at most 50 Primitive steps.");
-      }
-
-      const steps: PrimitiveTaskStep[] = rawSteps.map((raw, index) => {
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          throw new Error(`Invalid Primitive task step at index ${index}.`);
-        }
-        const value = raw as Record<string, unknown>;
-        const id = typeof value.id === "string" ? value.id.trim() : "";
-        const primitive =
-          typeof value.primitive === "string" ? value.primitive.trim() : "";
-        const op = typeof value.op === "string" ? value.op.trim() : "";
-
-        if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
-          throw new Error(
-            `Invalid Primitive task step id at index ${index}: "${id}".`,
-          );
-        }
-        if (!primitive) {
-          throw new Error(`Missing primitive for task step "${id}".`);
-        }
-        if (!op) {
-          throw new Error(`Missing op for task step "${id}".`);
-        }
-
-        const stepArgs =
-          value.args && typeof value.args === "object" && !Array.isArray(value.args)
-            ? (value.args as JsonObject)
-            : {};
-        const dependsOn = Array.isArray(value.depends_on)
-          ? value.depends_on.filter(
-              (item): item is string => typeof item === "string",
-            )
-          : [];
-
-        return {
-          id,
-          primitive,
-          op,
-          args: stepArgs,
-          dependsOn,
-        };
-      });
+      const steps = parsePrimitiveTaskSteps(args.steps, "runtime.compile_task");
 
       return await createPersistentPrimitiveTask(label, steps, {
         maxConcurrency:
@@ -393,6 +510,100 @@ const skills: SkillDefinition[] = [
             ? Math.min(Math.max(Math.trunc(args.max_concurrency), 1), 8)
             : 4,
         failFast: optionalBoolean(args, "fail_fast", true),
+      });
+    },
+  },
+  {
+    id: "runtime.schedule",
+    domain: "runtime",
+    description:
+      "Create, inspect, cancel, or delete persistent wake schedules that run Primitive graphs after the current ChatGPT/MCP request has ended.",
+    keywords: [
+      "schedule",
+      "scheduler",
+      "cron",
+      "monitor",
+      "watch",
+      "定时",
+      "监控",
+      "循环",
+      "wake",
+    ],
+    contract: SCHEDULER_CONTRACT,
+    inputs: {
+      op: "create | list | status | cancel | delete. Default: create.",
+      label: "Human-readable schedule label for create.",
+      trigger:
+        'Trigger object: {kind:"once",at}, {kind:"interval",every_ms,start_at?}, or {kind:"daily",time:"HH:MM"}. Daily uses the computer local timezone.',
+      steps:
+        "Primitive graph template executed on every occurrence. A fresh Persistent Primitive Task is created for each occurrence.",
+      stop_when:
+        "Optional terminal condition: {ref:'stepId.path', equals:value} or {ref:'stepId.path', truthy:true|false}.",
+      max_runs: "Optional maximum completed occurrences.",
+      end_at: "Optional ISO date/time after which no new occurrence runs.",
+      schedule_id: "Required for status/cancel/delete.",
+    },
+    dryRunPlan: (args) => ({
+      durable: true,
+      op: typeof args.op === "string" ? args.op : "create",
+      label: args.label ?? null,
+      trigger: args.trigger ?? null,
+      stepCount: Array.isArray(args.steps) ? args.steps.length : 0,
+      wakeModel: "persistent_local_scheduler",
+      survivesMcpRequest: true,
+      survivesRuntimeRestart: true,
+    }),
+    run: async (args) => {
+      const operation =
+        typeof args.op === "string" ? args.op.trim().toLowerCase() : "create";
+
+      if (operation === "list") {
+        return await listPersistentSchedules();
+      }
+
+      if (["status", "cancel", "delete"].includes(operation)) {
+        const scheduleId = requiredText(args, "schedule_id");
+        if (operation === "status") {
+          return await getPersistentSchedule(scheduleId);
+        }
+        if (operation === "cancel") {
+          return await cancelPersistentSchedule(scheduleId);
+        }
+        return await deletePersistentSchedule(scheduleId);
+      }
+
+      if (operation !== "create") {
+        throw new Error(
+          'runtime.schedule op must be "create", "list", "status", "cancel", or "delete".',
+        );
+      }
+
+      const label = requiredText(args, "label");
+      const steps = parsePrimitiveTaskSteps(args.steps, "runtime.schedule");
+      const trigger = parseScheduleTrigger(args);
+      const stopWhen = parseStopWhen(args);
+
+      return await createPrimitiveSchedule({
+        label,
+        trigger,
+        steps,
+        taskLabel:
+          typeof args.task_label === "string" ? args.task_label.trim() : label,
+        maxConcurrency:
+          typeof args.max_concurrency === "number"
+            ? args.max_concurrency
+            : undefined,
+        failFast: optionalBoolean(args, "fail_fast", true),
+        maxWaves:
+          typeof args.max_waves === "number" ? args.max_waves : undefined,
+        timeBudgetMs:
+          typeof args.time_budget_ms === "number"
+            ? args.time_budget_ms
+            : undefined,
+        ...(stopWhen ? { stopWhen } : {}),
+        maxRuns:
+          typeof args.max_runs === "number" ? args.max_runs : undefined,
+        endAt: typeof args.end_at === "string" ? args.end_at : undefined,
       });
     },
   },
@@ -1498,6 +1709,7 @@ export async function getCapabilityManifest(goal = "") {
         semantic: "planned explicit promotion",
       },
       persistentTasks: "v0.8 + v0.9.5 Primitive-task path",
+      persistentScheduler: "v0.9.6 wake scheduler + scheduled Primitive graphs",
       dependencyGraph: "v0.7",
       providerRouter: "v0.6",
       providers: "v0.5",
