@@ -8,6 +8,8 @@ AgentOS Runtime is a personal computer-agent execution runtime for ChatGPT. It e
 
 Architecture and 1.0 criteria: [`docs/AGENTOS_RUNTIME.md`](docs/AGENTOS_RUNTIME.md)
 
+L1 Primitive ISA review: [`docs/L1_PRIMITIVE_ISA_REVIEW.md`](docs/L1_PRIMITIVE_ISA_REVIEW.md)
+
 ## v0.9 — Primitive & Skill Runtime
 
 v0.9 incorporates the strongest architectural ideas from the earlier Owl Lab Agent OS work without adding a second LLM planner.
