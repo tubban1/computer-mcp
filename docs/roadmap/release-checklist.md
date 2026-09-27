@@ -37,6 +37,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] Performance P0 verifier
 - [ ] Resource wait timeout/cancellation verifier
 - [ ] Tunnel setup/persistence/redaction verifier
+- [ ] ChatGPT onboarding/background tunnel-service verifier
 - [ ] Read-only observation remains responsive under unrelated workspace write load
 - [ ] Reconnect churn returns active MCP session/transport counts to a bounded baseline
 

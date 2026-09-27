@@ -8,6 +8,7 @@ This directory is organized by document purpose rather than release chronology.
 - [Layer model](architecture/layers.md)
 - [v1.0 roadmap](roadmap/v1.0.md)
 - [Production Runtime](operations/production-runtime.md)
+- [ChatGPT onboarding](operations/chatgpt-onboarding.md)
 - [Production promotion policy](operations/production-promotion.md)
 - [Computer MCP 1.0 Performance P0](operations/performance-p0.md)
 - [Concurrency and ownership](architecture/concurrency-and-ownership.md)
@@ -21,6 +22,7 @@ Long-lived system design and boundaries.
 - [Layers](architecture/layers.md)
 - [Concurrency and ownership](architecture/concurrency-and-ownership.md)
 - [Runtime identity](architecture/runtime-identity.md)
+- [Records, audit, and observability](architecture/records-and-observability.md)
 
 ## Specifications
 
@@ -55,6 +57,7 @@ Contracts intended to remain stable across implementations.
 - [Graceful drain and workspace handoff](operations/graceful-drain-and-handoff.md)
 - [Multi-agent soak testing](operations/soak-testing.md)
 - [Configuration](operations/configuration.md)
+- [ChatGPT onboarding](operations/chatgpt-onboarding.md)
 - [Tunnel client setup](operations/tunnel-client.md)
 - [Recovery](operations/recovery.md)
 - [Fault recovery matrix](operations/fault-recovery.md)

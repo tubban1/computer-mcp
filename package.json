@@ -52,7 +52,14 @@
     "tunnel:setup": "bash scripts/tunnel-client.sh setup",
     "tunnel:status": "bash scripts/tunnel-client.sh status",
     "tunnel:run": "bash scripts/tunnel-client.sh run",
-    "verify:tunnel-config": "bash scripts/verify-tunnel-config.sh"
+    "verify:tunnel-config": "bash scripts/verify-tunnel-config.sh",
+    "setup": "zsh scripts/chatgpt-onboard.sh",
+    "onboard:chatgpt": "zsh scripts/chatgpt-onboard.sh",
+    "tunnel:service:install": "zsh scripts/tunnel-service.sh install",
+    "tunnel:service:status": "zsh scripts/tunnel-service.sh status",
+    "tunnel:service:stop": "zsh scripts/tunnel-service.sh stop",
+    "tunnel:service:restart": "zsh scripts/tunnel-service.sh restart",
+    "verify:onboarding": "zsh scripts/verify-chatgpt-onboarding.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

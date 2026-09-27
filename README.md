@@ -26,7 +26,9 @@ Multi-agent soak testing: [`docs/operations/soak-testing.md`](docs/operations/so
 
 ### Running Jarvis
 
-For normal daily use, install Production once with `npm run install:production`; launchd then starts Jarvis automatically. For later verified releases, use `npm run upgrade:production` so the new candidate is preflighted and the old Runtime is gracefully drained before cutover. Do **not** run `npm run dev` for normal use. `npm run dev` is only for AgentOS source development and defaults to port `8788` with `~/.computer-mcp-dev`, while Production normally uses port `8787` with `~/.computer-mcp`.
+For a new user, run `npm run setup`. It checks or installs the first Production Runtime, configures Secure MCP Tunnel, prepares the background tunnel service, copies the Tunnel ID, and opens ChatGPT for the final user-authorized Plugin connection. See [`docs/operations/chatgpt-onboarding.md`](docs/operations/chatgpt-onboarding.md).
+
+For normal daily use after onboarding, launchd starts Jarvis automatically. For later verified releases, use the explicit `npm run promote:production` boundary so the new candidate is preflighted and the old Runtime is gracefully drained before cutover. Do **not** run `npm run dev` for normal use. `npm run dev` is only for AgentOS source development and defaults to port `8788` with `~/.computer-mcp-dev`, while Production normally uses port `8787` with `~/.computer-mcp`.
 
 ## v0.9 — Primitive & Skill Runtime
 

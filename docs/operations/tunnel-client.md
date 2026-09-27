@@ -31,14 +31,21 @@ The API key is never written into `package.json`, a Git-tracked file, or the tun
 
 ## Normal use
 
-After setup:
+After setup, interactive development can still use:
 
 ```bash
 npm run tunnel:status
 npm run tunnel:run
 ```
 
-`tunnel:status` reports whether the key exists but never prints it. `tunnel:run` reuses the saved Tunnel ID, runtime path, MCP target, and secret file, so normal starts require no credential input.
+For normal daily use, prefer the independent background service:
+
+```bash
+npm run tunnel:service:install
+npm run tunnel:service:status
+```
+
+`tunnel:status` reports whether the key exists but never prints it. `tunnel:run` reuses the saved Tunnel ID, runtime path, MCP target, and secret file. The background service uses the same saved configuration and a `file:` secret reference, so normal starts require no credential input.
 
 The default MCP target is the standalone production listener:
 
