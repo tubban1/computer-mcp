@@ -4,6 +4,7 @@ This directory is organized by document purpose rather than release chronology.
 
 ## Start here
 
+- [v1.0.3 release](releases/v1.0.3.md)
 - [v1.0.2 release](releases/v1.0.2.md)
 - [v1.0.1 release](releases/v1.0.1.md)
 - [v1.0.0 release](releases/v1.0.0.md)

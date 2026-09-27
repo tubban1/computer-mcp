@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -68,7 +68,8 @@
     "verify:runtime-host": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-runtime-host.ts",
     "verify:macos-filesystem-access": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-filesystem-access.ts",
     "package:macos": "zsh scripts/build-macos-distribution.sh",
-    "verify:macos-distribution": "zsh scripts/verify-macos-distribution.sh"
+    "verify:macos-distribution": "zsh scripts/verify-macos-distribution.sh",
+    "verify:macos-protected-path-live": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-protected-path-live.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

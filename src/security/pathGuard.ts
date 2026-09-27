@@ -52,15 +52,8 @@ async function realConfiguredRootsFor(requested: string): Promise<string[]> {
   const resolved: string[] = [];
   for (const root of matching) {
     try {
-      await assertMacOSFilesystemResponsive(root);
       resolved.push(await fs.realpath(root));
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.startsWith("MACOS_FILE_PERMISSION_REQUIRED")
-      ) {
-        throw error;
-      }
+    } catch {
       // Ignore a missing matching root; another matching root may still exist.
     }
   }
