@@ -101,6 +101,7 @@ import {
   runtimePathStatus,
 } from "./runtime/runtimePaths.js";
 import { runtimeLifecycle } from "./runtime/runtimeLifecycle.js";
+import { resourceArbiter } from "./runtime/resourceArbiter.js";
 import {
   mcpPerformanceSnapshot,
   recordMcpToolLatency,
@@ -506,7 +507,7 @@ function createServer() {
 
   server.tool(
     "execute_command",
-    "Run a shell command with a working directory inside ALLOWED_DIRECTORIES. Powerful and not sandboxed; requires ALLOW_SHELL=true.",
+    "Run a shell command with a working directory inside ALLOWED_DIRECTORIES. Powerful and not sandboxed; requires ALLOW_SHELL=true. Prefer start_process for builds, tests, servers, or commands likely to run longer than ~10 seconds so client/transport timeouts do not lose job progress.",
     {
       command: z.string().min(1),
       cwd: z.string(),
@@ -540,7 +541,7 @@ function createServer() {
 
   server.tool(
     "start_process",
-    "Start a long-running shell process in an allowed working directory and return a process ID. Requires ALLOW_SHELL=true.",
+    "Start a durable long-running shell process in an allowed working directory and return a process ID. Use this for builds, tests, servers, or commands likely to run longer than ~10 seconds, then poll get_process_output with short calls. Requires ALLOW_SHELL=true.",
     {
       command: z.string().min(1),
       cwd: z.string(),
@@ -940,6 +941,7 @@ function createServer() {
           runtime: {
             ...runtimePathStatus(),
             sessions: runtimeSessionManager.summary(),
+            resources: resourceArbiter.status(),
             lifecycle: runtimeLifecycle.status(),
             stateSchema: await getStateSchemaStatus(),
           },
@@ -2362,6 +2364,7 @@ app.get("/health", async (_req, res) => {
         transportSweepMs,
       },
       lifecycle: runtimeHealthLifecycle(),
+      resources: resourceArbiter.status(),
       stateSchema: await getStateSchemaStatus(),
       backgroundControllersStarted: !candidateMode,
     },

@@ -107,9 +107,14 @@ Computer MCP 1.0 owns:
 - bounded session lifecycle, including repeated reconnect churn without active-session accumulation;
 - stale transport cleanup;
 - cancellation propagation;
+- cancellation-aware resource queues;
+- interactive MCP resource waits bounded to 3 seconds by default (`MCP_RESOURCE_WAIT_TIMEOUT_MS`);
 - orphan process cleanup/claim semantics;
-- local health endpoint;
+- natural process-exit reconciliation and workspace-lease release;
+- local health endpoint with active/pending resource diagnostics;
 - server-side latency diagnostics.
+
+For commands likely to run longer than an interactive MCP response window, prefer `start_process` + short output polls instead of one long synchronous `execute_command`. A client-stream timeout must not destroy or orphan the underlying durable job.
 
 The external Secure MCP Tunnel / ChatGPT gateway owns part of reconnect timing that the local MCP server cannot retry after a request never reaches it.
 

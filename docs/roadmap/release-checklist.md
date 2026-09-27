@@ -35,6 +35,8 @@ Use this checklist for release candidates and stable releases.
 - [ ] Production boundary verifier
 - [ ] Performance P0 verifier
 - [ ] Read-only observation remains responsive under unrelated workspace write load
+- [ ] Interactive resource waits cancel promptly and fail with bounded `RESOURCE_WAIT_TIMEOUT`
+- [ ] Natural managed-process exit reconciles and releases its workspace lease
 - [ ] Reconnect churn returns active MCP session/transport counts to a bounded baseline
 
 ## Production
