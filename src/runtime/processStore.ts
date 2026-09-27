@@ -26,6 +26,7 @@ export type ManagedProcessRecord = {
   workspaceMode: "read" | "write";
   workspaceLeaseId?: string;
   ownerSessionId: string;
+  ownerIdentity?: string;
   ownerTaskId?: string;
   startedAt: string;
   updatedAt: string;
@@ -37,6 +38,7 @@ export type ManagedProcessRecord = {
   stderrPath: string;
   inputAvailable: boolean;
   recoveredAfterRestart?: boolean;
+  orphanedAt?: string;
 };
 
 type EncryptedEnvelope = {

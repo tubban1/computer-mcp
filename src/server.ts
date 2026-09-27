@@ -56,6 +56,10 @@ import { appendAudit, getAuditLogPath, readAuditLog, sanitizeAuditArgs } from ".
 import { envFlag } from "./security/capabilities.js";
 import { configuredRoots, runtimeOwnedRoots } from "./security/pathGuard.js";
 import { getProviderStatuses } from "./providers/registry.js";
+import {
+  getRuntimeClient,
+  getRuntimeClientStatus,
+} from "./runtimeClient/runtimeClient.js";
 import { browserProvider } from "./providers/browserProvider.js";
 import { desktopProvider } from "./providers/desktopProvider.js";
 import {
@@ -80,14 +84,9 @@ import {
 } from "./tasks/taskRuntime.js";
 import {
   executePrimitive,
-  getPrimitiveCatalog,
   resolvePrimitive,
 } from "./primitives/primitiveRuntime.js";
-import {
-  executeSkill,
-  getCapabilityManifest,
-  getSkillCatalog,
-} from "./skills/skillRuntime.js";
+import { executeSkill } from "./skills/skillRuntime.js";
 import { startPersistentScheduler } from "./runtime/scheduler.js";
 import { startPersistentLoopController } from "./runtime/loopController.js";
 import {
@@ -97,6 +96,7 @@ import {
 import { withExecutionContext } from "./runtime/executionContext.js";
 import { AGENTOS_RUNTIME_CONTRACTS } from "./runtime/contractVersions.js";
 import { AGENTOS_RUNTIME_VERSION } from "./runtime/runtimeVersion.js";
+import { resolveLogicalOwnerIdentity } from "./runtime/sessionIdentity.js";
 import { runtimeSessionManager } from "./runtime/runtimeSessionManager.js";
 import {
   runtimeCandidateMode,
@@ -107,7 +107,10 @@ import {
   assertStateSchemaReadable,
   getStateSchemaStatus,
 } from "./runtime/stateSchema.js";
-import { releaseWorkspaceLeasesForSession } from "./runtime/workspaceLeaseManager.js";
+import {
+  releaseWorkspaceLeasesForOwner,
+  releaseWorkspaceLeasesForSession,
+} from "./runtime/workspaceLeaseManager.js";
 
 type ToolAuditContext = {
   tool: string;
@@ -931,6 +934,7 @@ function createServer() {
           version: AGENTOS_RUNTIME_VERSION,
           identity: getRuntimeIdentity(),
           contracts: AGENTOS_RUNTIME_CONTRACTS,
+          runtimeClient: getRuntimeClientStatus(),
           runtime: {
             ...runtimePathStatus(),
             sessions: runtimeSessionManager.summary(),
@@ -975,6 +979,11 @@ function createServer() {
           skillAbi: true,
           resourceArbiter: true,
           sessionAwareConcurrency: true,
+          logicalOwnerIdentity: true,
+          mcpRequestCancellation: true,
+          orphanProcessDetection: true,
+          processGroupTermination: process.platform !== "win32",
+          staleTransportSweep: true,
           gracefulDrain: true,
           workspaceHandoff: true,
           upgradeCandidateMode: true,
@@ -1950,7 +1959,7 @@ function createServer() {
     },
     async ({ goal }) => {
       try {
-        return ok(await getCapabilityManifest(goal ?? ""));
+        return ok(await getRuntimeClient().getCapabilities(goal ?? ""));
       } catch (error) {
         return fail(error);
       }
@@ -1970,7 +1979,7 @@ function createServer() {
     },
     async () => {
       try {
-        return ok(getPrimitiveCatalog());
+        return ok(await getRuntimeClient().getPrimitiveCatalog());
       } catch (error) {
         return fail(error);
       }
@@ -2021,7 +2030,7 @@ function createServer() {
     },
     async () => {
       try {
-        return ok(getSkillCatalog());
+        return ok(await getRuntimeClient().getSkillCatalog());
       } catch (error) {
         return fail(error);
       }
@@ -2068,6 +2077,57 @@ if (candidateMode) {
 }
 
 const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
+const activeMcpRequestControllers = new Map<string, AbortController>();
+
+function mcpRequestKey(sessionId: string, requestId: string | number): string {
+  return `${sessionId}:${typeof requestId}:${String(requestId)}`;
+}
+
+function abortMcpRequestsForSession(sessionId: string, reason: string) {
+  const prefix = `${sessionId}:`;
+  for (const [key, controller] of activeMcpRequestControllers) {
+    if (!key.startsWith(prefix)) continue;
+    if (!controller.signal.aborted) controller.abort(new Error(reason));
+    activeMcpRequestControllers.delete(key);
+  }
+}
+
+let transportSweepRunning = false;
+async function sweepStaleTransportSessions() {
+  if (transportSweepRunning) return;
+  transportSweepRunning = true;
+  try {
+    const staleSessionIds = runtimeSessionManager
+      .list()
+      .filter((state) => Boolean(state.disconnectedAt) && state.activeCalls === 0)
+      .map((state) => state.id);
+
+    for (const id of staleSessionIds) {
+      const entry = sessions.get(id);
+      if (!entry) continue;
+      sessions.delete(id);
+      abortMcpRequestsForSession(
+        id,
+        "MCP transport session expired after inactivity.",
+      );
+      await entry.transport.close().catch(() => undefined);
+    }
+  } finally {
+    transportSweepRunning = false;
+  }
+}
+
+const configuredTransportSweepMs = Number(
+  process.env.RUNTIME_SESSION_SWEEP_MS,
+);
+const transportSweepMs = Number.isFinite(configuredTransportSweepMs)
+  ? Math.min(Math.max(Math.trunc(configuredTransportSweepMs), 1_000), 10 * 60_000)
+  : 60_000;
+const transportSweepTimer = setInterval(
+  () => void sweepStaleTransportSessions(),
+  transportSweepMs,
+);
+transportSweepTimer.unref();
 
 app.all("/mcp", async (req, res) => {
   try {
@@ -2085,22 +2145,40 @@ app.all("/mcp", async (req, res) => {
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id): void => {
           sessions.set(id, { transport, server });
-          runtimeSessionManager.register(id);
+          const identity = resolveLogicalOwnerIdentity(req.headers, id);
+          runtimeSessionManager.register(id, {
+            ownerId: identity.ownerId,
+            userAgent:
+              typeof req.headers["user-agent"] === "string"
+                ? req.headers["user-agent"]
+                : undefined,
+          });
         },
       });
       transport.onclose = () => {
         const closedSessionId = transport.sessionId;
         if (!closedSessionId) return;
         sessions.delete(closedSessionId);
-        runtimeSessionManager.disconnect(closedSessionId);
-        void releaseWorkspaceLeasesForSession(closedSessionId).catch(
-          (error) => {
+        abortMcpRequestsForSession(
+          closedSessionId,
+          "MCP transport session closed.",
+        );
+        const closed = runtimeSessionManager.disconnect(closedSessionId);
+        const ownerId = closed?.ownerId ?? closedSessionId;
+        // Always clear legacy session-only ownership created before logical
+        // owner identities existed. Durable Task/Process leases are untouched.
+        void releaseWorkspaceLeasesForSession(closedSessionId).catch((error) => {
+          console.error("AgentOS legacy session workspace cleanup failed:", error);
+        });
+
+        if (runtimeSessionManager.ownerStatus(ownerId).activeSessions === 0) {
+          void releaseWorkspaceLeasesForOwner(ownerId).catch((error) => {
             console.error(
-              "AgentOS session workspace cleanup failed:",
+              "AgentOS logical-owner workspace cleanup failed:",
               error,
             );
-          },
-        );
+          });
+        }
       };
       await server.connect(transport);
       session = { transport, server };
@@ -2110,9 +2188,38 @@ app.all("/mcp", async (req, res) => {
     if (!activeSession) throw new Error("MCP session initialization failed.");
 
     const body = req.body as {
+      id?: string | number;
       method?: string;
-      params?: { name?: string; arguments?: unknown };
+      params?: {
+        name?: string;
+        arguments?: unknown;
+        requestId?: string | number;
+        reason?: string;
+      };
     };
+
+    if (
+      body?.method === "notifications/cancelled" &&
+      sessionId &&
+      body.params?.requestId !== undefined
+    ) {
+      const controller = activeMcpRequestControllers.get(
+        mcpRequestKey(sessionId, body.params.requestId),
+      );
+      if (controller && !controller.signal.aborted) {
+        controller.abort(
+          new Error(
+            body.params.reason?.trim() ||
+              "MCP client cancelled the in-flight request.",
+          ),
+        );
+      }
+      // The SDK can keep the response SSE stream open after cancellation even
+      // though the tool handler has already aborted. Closing the request stream
+      // lets handleRequest() settle so our request/session bookkeeping cannot
+      // remain pinned forever.
+      activeSession.transport.closeSSEStream(body.params.requestId);
+    }
 
     if (body?.method === "tools/call" && body.params?.name) {
       const toolName = body.params.name;
@@ -2122,20 +2229,68 @@ app.all("/mcp", async (req, res) => {
         activeSession.transport.sessionId ??
         `mcp:bootstrap:${randomUUID()}`;
       const requestId = randomUUID();
+      const identity = resolveLogicalOwnerIdentity(
+        req.headers,
+        effectiveSessionId,
+      );
       runtimeSessionManager.beginCall(effectiveSessionId, {
+        ownerId: identity.ownerId,
         userAgent:
           typeof req.headers["user-agent"] === "string"
             ? req.headers["user-agent"]
             : undefined,
       });
 
+      const requestAbort = new AbortController();
+      const activeRequestKey =
+        body.id !== undefined
+          ? mcpRequestKey(effectiveSessionId, body.id)
+          : null;
+      if (activeRequestKey) {
+        activeMcpRequestControllers.set(activeRequestKey, requestAbort);
+      }
+
+      const abortRequest = (message: string) => {
+        if (!requestAbort.signal.aborted) {
+          requestAbort.abort(new Error(message));
+        }
+        if (body.id !== undefined) {
+          activeSession.transport.closeSSEStream(body.id);
+        }
+      };
+      const onRequestAborted = () =>
+        abortRequest("MCP transport request was aborted by the client.");
+      const onResponseClosed = () => {
+        if (!res.writableEnded) {
+          abortRequest("MCP transport response closed before completion.");
+        }
+      };
+      req.once("aborted", onRequestAborted);
+      res.once("close", onResponseClosed);
+
+      const configuredTimeout = Number(process.env.MCP_REQUEST_TIMEOUT_MS);
+      const requestTimeoutMs = Number.isFinite(configuredTimeout)
+        ? Math.min(Math.max(Math.trunc(configuredTimeout), 5_000), 30 * 60_000)
+        : 10 * 60_000;
+      const requestTimer = setTimeout(
+        () =>
+          abortRequest(
+            `MCP tool request exceeded transport timeout (${requestTimeoutMs} ms).`,
+          ),
+        requestTimeoutMs,
+      );
+      requestTimer.unref();
+
       try {
         await withExecutionContext(
           {
             sessionId: effectiveSessionId,
+            transportSessionId: effectiveSessionId,
+            ownerId: identity.ownerId,
             requestId,
             origin: "mcp",
             tool: toolName,
+            signal: requestAbort.signal,
           },
           async () =>
             await toolAuditContext.run(
@@ -2155,6 +2310,15 @@ app.all("/mcp", async (req, res) => {
             ),
         );
       } finally {
+        clearTimeout(requestTimer);
+        req.off("aborted", onRequestAborted);
+        res.off("close", onResponseClosed);
+        if (
+          activeRequestKey &&
+          activeMcpRequestControllers.get(activeRequestKey) === requestAbort
+        ) {
+          activeMcpRequestControllers.delete(activeRequestKey);
+        }
         runtimeSessionManager.endCall(effectiveSessionId);
       }
     } else {
@@ -2182,9 +2346,15 @@ app.get("/health", async (_req, res) => {
     version: AGENTOS_RUNTIME_VERSION,
     identity: getRuntimeIdentity(),
     contracts: AGENTOS_RUNTIME_CONTRACTS,
+    runtimeClient: getRuntimeClientStatus(),
     runtime: {
       ...runtimePathStatus(),
-      sessions: runtimeSessionManager.summary(),
+      sessions: {
+        ...runtimeSessionManager.summary(),
+        transportRegistrySize: sessions.size,
+        inFlightMcpRequests: activeMcpRequestControllers.size,
+        transportSweepMs,
+      },
       lifecycle: runtimeHealthLifecycle(),
       stateSchema: await getStateSchemaStatus(),
       backgroundControllersStarted: !candidateMode,
@@ -2226,6 +2396,11 @@ app.get("/health", async (_req, res) => {
       skillAbi: true,
       resourceArbiter: true,
       sessionAwareConcurrency: true,
+      logicalOwnerIdentity: true,
+      mcpRequestCancellation: true,
+      orphanProcessDetection: true,
+      processGroupTermination: process.platform !== "win32",
+      staleTransportSweep: true,
       gracefulDrain: true,
       workspaceHandoff: true,
       upgradeCandidateMode: true,
