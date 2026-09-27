@@ -45,6 +45,12 @@ assert.equal(
   pkg.scripts?.["upgrade:production"],
   pkg.scripts?.["promote:production"],
 );
+assert.match(installProduction, /bootstrap_runtime_service/);
+assert.match(installProduction, /for _ in \{1\.\.5\}/);
+assert.match(
+  installProduction,
+  /Restoring previous release before aborting install/,
+);
 
 for (const [name, source] of [
   ["install-production-runtime.sh", installProduction],
@@ -162,6 +168,7 @@ console.log(
       ok: true,
       explicitProductionPromotionOnly: true,
       productionScriptsDoNotReplaceHelper: true,
+      productionInstallBootstrapRetryAndRollback: true,
       helperStablePath:
         "~/Applications/Computer MCP Helper.app",
       helperBundleId: "fan.fde.computermcp.helper",

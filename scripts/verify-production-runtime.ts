@@ -7,6 +7,14 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distServer = path.join(root, "dist", "server.js");
+const packageJson = JSON.parse(
+  await fs.readFile(path.join(root, "package.json"), "utf8"),
+) as { version: string };
+const expectedRuntimeVersion = packageJson.version;
+const escapedRuntimeVersion = expectedRuntimeVersion.replace(
+  /[.*+?^${}()|[\]\\]/g,
+  "\\$&",
+);
 const scratch = path.join(root, ".tmp-verify-production-runtime");
 const stateRoot = path.join(scratch, "state");
 
@@ -99,7 +107,7 @@ try {
 
   assert.equal(health.ok, true);
   assert.equal(health.service, "computer-mcp");
-  assert.equal(health.version, "1.0.0");
+  assert.equal(health.version, expectedRuntimeVersion);
   for (const contractName of [
     "primitiveAbi",
     "skillAbi",
@@ -152,7 +160,10 @@ try {
   assert.equal(health.runtime?.stateSchema?.readable, true);
   assert.equal(health.runtime?.stateSchema?.migrationRequired, true);
 
-  assert.match(stdout, /computer-mcp v1\.0\.0 listening/);
+  assert.match(
+    stdout,
+    new RegExp(`computer-mcp v${escapedRuntimeVersion} listening`),
+  );
   assert.doesNotMatch(stdout, /tsx watch/);
 
   console.log(

@@ -21,6 +21,22 @@ LABEL="com.agentos.runtime"
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
 
+bootstrap_runtime_service() {
+  launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+  local bootstrapped=false
+  for _ in {1..5}; do
+    if launchctl bootstrap "gui/$UID" "$PLIST" >/dev/null 2>&1; then
+      bootstrapped=true
+      break
+    fi
+    sleep 0.5
+  done
+  if [[ "$bootstrapped" != "true" ]]; then
+    return 1
+  fi
+  launchctl kickstart -k "gui/$UID/$LABEL"
+}
+
 if [[ "${ALLOW_DIRTY_PRODUCTION_INSTALL:-false}" != "true" ]]; then
   TRACKED_DIRTY="$(git status --porcelain --untracked-files=no)"
   if [[ -n "$TRACKED_DIRTY" ]]; then
@@ -128,9 +144,22 @@ cat > "$PLIST" <<EOF
 EOF
 chmod 600 "$PLIST"
 
-launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/$UID" "$PLIST"
-launchctl kickstart -k "gui/$UID/$LABEL"
+if ! bootstrap_runtime_service; then
+  echo "Could not register the Production LaunchAgent after bounded retries."
+  if [[ -n "$PREVIOUS_RELEASE" && -d "$PREVIOUS_RELEASE" ]]; then
+    echo "Restoring previous release before aborting install:"
+    echo "  $PREVIOUS_RELEASE"
+    ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    if bootstrap_runtime_service; then
+      echo "Previous Production LaunchAgent restored."
+    else
+      echo "Previous release symlink restored, but LaunchAgent registration also failed."
+    fi
+  else
+    rm -f "$CURRENT_LINK"
+  fi
+  exit 1
+fi
 
 # Read PORT from the production environment without allowing it to change the
 # installer's release/state decisions.
