@@ -13,6 +13,7 @@ Use this checklist for release candidates and stable releases.
 ## Runtime conformance
 
 - [ ] Primitive ISA verifier
+- [ ] Stable contract conformance verifier
 - [ ] Skill ABI verifier
 - [ ] Task/staging verifier
 - [ ] Scheduler verifier

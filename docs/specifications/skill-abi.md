@@ -1,6 +1,6 @@
 # AgentOS Runtime Skill ABI
 
-Status: **v0.9.5 candidate**
+Status: **Contract v1 Stable for AgentOS Runtime 1.x**
 
 A Skill is an L2 runtime unit above the L1 Primitive ISA.
 
@@ -57,7 +57,7 @@ Current policy fields:
     episodic
     semanticPromotion
 
-v0.9.5 defaults are intentionally conservative:
+The v1 defaults are intentionally conservative:
 
     working            = runtime
     staging            = available_when_durable
@@ -68,7 +68,7 @@ Semantic promotion is never implicit.
 
 ## Complex Skill compilation
 
-v0.9.5 provides the generic durable Skill:
+The Runtime provides the generic durable Skill:
 
     runtime.compile_task
 
@@ -114,11 +114,11 @@ or
 
 No new top-level MCP tool is required.
 
-## Compatibility rules toward v1
+## 1.x compatibility rules
 
-Before Skill ABI is declared stable:
+With Skill ABI v1 stable:
 
-- Skill IDs may still evolve during v0.9.x.
+- New Skill IDs may be added in 1.x; an existing Skill ID is not silently repurposed.
 - skillVersion must change when workflow semantics or input contracts change materially.
 - requiredPrimitiveAbi must never exceed the runtime ABI silently.
 - requiredPrimitives must refer to canonical Primitive IDs, not deprecated aliases.
@@ -127,4 +127,4 @@ Before Skill ABI is declared stable:
 - risk, sideEffects, retryPolicy, and resources are part of the Skill execution contract and must be declared before execution.
 - memory promotion must remain explicit and auditable.
 
-At v1.0, the goal is to freeze these compatibility rules independently from the individual Skill catalog.
+These rules are frozen independently from the individual Skill catalog. See [Compatibility Policy](compatibility-policy.md).

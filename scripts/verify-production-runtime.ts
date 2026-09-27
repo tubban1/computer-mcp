@@ -99,7 +99,21 @@ try {
 
   assert.equal(health.ok, true);
   assert.equal(health.service, "computer-mcp");
-  assert.equal(health.version, "0.9.16");
+  assert.equal(health.version, "1.0.0-rc.1");
+  for (const contractName of [
+    "primitiveAbi",
+    "skillAbi",
+    "sessionAdapter",
+    "embeddingProvider",
+    "workspaceLease",
+  ]) {
+    assert.equal(health.contracts?.[contractName]?.version, 1);
+    assert.equal(health.contracts?.[contractName]?.status, "stable");
+    assert.equal(
+      health.contracts?.[contractName]?.compatibility,
+      "additive-1.x",
+    );
+  }
   assert.equal(health.runtime?.mode, "production");
   assert.equal(path.resolve(health.runtime?.stateRoot), path.resolve(stateRoot));
   assert.equal(path.resolve(health.runtime?.codeRoot), path.resolve(root));
@@ -126,7 +140,7 @@ try {
   assert.equal(health.runtime?.stateSchema?.readable, true);
   assert.equal(health.runtime?.stateSchema?.migrationRequired, true);
 
-  assert.match(stdout, /computer-mcp v0\.9\.16 listening/);
+  assert.match(stdout, /computer-mcp v1\.0\.0-rc\.1 listening/);
   assert.doesNotMatch(stdout, /tsx watch/);
 
   console.log(
@@ -136,6 +150,7 @@ try {
         command: [process.execPath, distServer],
         sourceWatcher: false,
         healthVersion: health.version,
+        stableContracts: health.contracts,
         runtimeMode: health.runtime.mode,
         isolatedStateRoot: health.runtime.stateRoot,
         sessionAwareConcurrency: health.capabilities.sessionAwareConcurrency,

@@ -111,6 +111,8 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
+export const SKILL_ABI_VERSION = 1;
+
 type SkillContract = {
   riskLevel: "low" | "medium" | "high" | "critical";
   idempotent: boolean;
