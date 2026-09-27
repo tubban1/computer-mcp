@@ -11,6 +11,7 @@ These are intentionally not release blockers for Computer MCP 1.0.
 
 Per-capability Runtime integration may proceed during 1.x development, but it does not independently change production.
 
+- incremental/streaming search and partial tool results after 1.0 transport stability is proven
 - event-driven adapters beyond polling
 - additional desktop messaging adapters
 - richer local neural embedding providers and reranking

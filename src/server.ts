@@ -104,6 +104,10 @@ import {
 } from "./runtime/runtimePaths.js";
 import { runtimeLifecycle } from "./runtime/runtimeLifecycle.js";
 import {
+  mcpPerformanceSnapshot,
+  recordMcpToolLatency,
+} from "./runtime/performanceMetrics.js";
+import {
   assertStateSchemaReadable,
   getStateSchemaStatus,
 } from "./runtime/stateSchema.js";
@@ -935,6 +939,7 @@ function createServer() {
           identity: getRuntimeIdentity(),
           contracts: AGENTOS_RUNTIME_CONTRACTS,
           runtimeClient: getRuntimeClientStatus(),
+          performance: mcpPerformanceSnapshot(),
           runtime: {
             ...runtimePathStatus(),
             sessions: runtimeSessionManager.summary(),
@@ -991,6 +996,8 @@ function createServer() {
           stateMigrationRegistry: true,
           crashRecoveryMatrix: true,
           multiAgentSoakHarness: true,
+          mcpLatencyTelemetry: true,
+          performanceRegressionGate: true,
           sameRuntimeDisconnectedSessionReclamation: true,
           sameRuntimeIdleSessionReclamation: true,
           workspaceLeases: true,
@@ -2130,6 +2137,7 @@ const transportSweepTimer = setInterval(
 transportSweepTimer.unref();
 
 app.all("/mcp", async (req, res) => {
+  const requestReceivedAt = Date.now();
   try {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     let session = sessionId ? sessions.get(sessionId) : undefined;
@@ -2320,6 +2328,7 @@ app.all("/mcp", async (req, res) => {
           activeMcpRequestControllers.delete(activeRequestKey);
         }
         runtimeSessionManager.endCall(effectiveSessionId);
+        recordMcpToolLatency(toolName, Date.now() - requestReceivedAt);
       }
     } else {
       await activeSession.transport.handleRequest(req, res, req.body);
@@ -2347,6 +2356,7 @@ app.get("/health", async (_req, res) => {
     identity: getRuntimeIdentity(),
     contracts: AGENTOS_RUNTIME_CONTRACTS,
     runtimeClient: getRuntimeClientStatus(),
+    performance: mcpPerformanceSnapshot(),
     runtime: {
       ...runtimePathStatus(),
       sessions: {
@@ -2408,6 +2418,8 @@ app.get("/health", async (_req, res) => {
       stateMigrationRegistry: true,
       crashRecoveryMatrix: true,
       multiAgentSoakHarness: true,
+      mcpLatencyTelemetry: true,
+      performanceRegressionGate: true,
       sameRuntimeDisconnectedSessionReclamation: true,
       sameRuntimeIdleSessionReclamation: true,
       workspaceLeases: true,

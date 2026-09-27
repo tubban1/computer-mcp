@@ -266,11 +266,29 @@ try {
   assert.ok(registryWithAbandoned >= 2);
   await abandoned.transport.close();
 
+  // Reconnect churn must not grow the live transport/session set without
+  // bound. Current 0.9.16 production accumulated hundreds of apparently
+  // active sessions, so make bounded churn a 1.0 regression gate.
+  const churnCount = 12;
+  for (let index = 0; index < churnCount; index += 1) {
+    const churn = await createClient(`stability-churn-${index}`);
+    await callTool(churn.client, "get_capabilities", {});
+    await churn.transport.close();
+  }
+
   await delay(2_500);
   const healthAfterSweep = await (await fetch(healthUrl)).json() as any;
   assert.ok(
     healthAfterSweep.runtime.sessions.transportRegistrySize <
       registryWithAbandoned,
+  );
+  assert.ok(
+    healthAfterSweep.runtime.sessions.activeSessions <= 2,
+    `session churn leaked active sessions: ${healthAfterSweep.runtime.sessions.activeSessions}`,
+  );
+  assert.ok(
+    healthAfterSweep.runtime.sessions.transportRegistrySize <= 2,
+    `session churn leaked transports: ${healthAfterSweep.runtime.sessions.transportRegistrySize}`,
   );
   assert.equal(healthAfterSweep.runtime.sessions.inFlightMcpRequests, 0);
 
@@ -283,6 +301,12 @@ try {
         cancelledCommandProcessTreeCleaned: true,
         boundedSessionDiagnostics: true,
         staleTransportRegistrySwept: true,
+        reconnectChurnDoesNotLeakActiveSessions: true,
+        churnCount,
+        activeSessionsAfterChurn:
+          healthAfterSweep.runtime.sessions.activeSessions,
+        transportRegistryAfterChurn:
+          healthAfterSweep.runtime.sessions.transportRegistrySize,
       },
       null,
       2,

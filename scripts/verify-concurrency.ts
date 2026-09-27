@@ -48,6 +48,9 @@ const { withExecutionContext } = await import(
 const { executeRoutedAction } = await import(
   "../src/router/actionRouter.js"
 );
+const { resourceArbiter } = await import(
+  "../src/runtime/resourceArbiter.js"
+);
 const {
   assertWorkspaceWriteAllowed,
   ensureWorkspaceWriteLease,
@@ -172,6 +175,60 @@ try {
   const hierarchicalWallMs = Date.now() - parentStarted;
   assert.ok(hierarchicalWallMs >= 1150);
   assert.ok(childResult.resourceWaitMs >= 800);
+
+  // Observation must stay responsive while unrelated workspace mutation is
+  // active. Exact-path fs resources still protect direct file-vs-file races,
+  // but a broad shell writer must not freeze read_file/list_directory across
+  // the entire repository tree.
+  const observationWriter = withExecutionContext(sessionA, async () =>
+    await executeRoutedAction("shell.exec", {
+      command: "sleep 1.2",
+      cwd: parentWorkspace,
+      workspace_mode: "write",
+      timeout_ms: 10000,
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const observationStarted = Date.now();
+  const [readObservation, listObservation] = await Promise.all([
+    withExecutionContext(sessionB, async () =>
+      await executeRoutedAction("fs.read", { path: fileA }),
+    ),
+    withExecutionContext(sessionB, async () =>
+      await executeRoutedAction("fs.list", { path: parentWorkspace }),
+    ),
+  ]);
+  const observationWallMs = Date.now() - observationStarted;
+  assert.ok(
+    observationWallMs < 500,
+    `read-only observation waited ${observationWallMs}ms behind an unrelated workspace writer`,
+  );
+  assert.ok(readObservation.resourceWaitMs < 250);
+  assert.ok(listObservation.resourceWaitMs < 250);
+  await observationWriter;
+
+  // Removing coarse read workspace locks must not remove exact-path safety.
+  // Hold the same fs:<path> exclusively and prove a read waits until release.
+  const exactPathLease = await resourceArbiter.acquire(
+    "verify-exact-path-write",
+    [{ key: `fs:${fileA}`, mode: "exclusive" }],
+  );
+  let exactPathReadSettled = false;
+  const exactPathRead = withExecutionContext(sessionB, async () =>
+    await executeRoutedAction("fs.read", { path: fileA }),
+  ).then((value) => {
+    exactPathReadSettled = true;
+    return value;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(
+    exactPathReadSettled,
+    false,
+    "same-path read bypassed the exact filesystem write resource",
+  );
+  exactPathLease.release();
+  const exactPathReadResult = await exactPathRead;
+  assert.ok(exactPathReadResult.resourceWaitMs >= 75);
 
   // Durable Task ownership is keyed by task id, not transport session id.
   const taskId = "task_concurrency_verifier";
@@ -410,6 +467,9 @@ try {
         siblingWallMs,
         hierarchicalActionLocks: true,
         hierarchicalWallMs,
+        readOnlyObservationNotBlockedByWorkspaceWriter: true,
+        observationWallMs,
+        exactPathReadWriteConflictPreserved: true,
         taskOwnershipTransportIndependent: true,
         processScopedWorkspaceLease: true,
         disconnectedProcessClaim: true,

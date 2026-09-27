@@ -33,6 +33,9 @@ Use this checklist for release candidates and stable releases.
 - [ ] Soak smoke profile
 - [ ] Production Runtime verifier
 - [ ] Production boundary verifier
+- [ ] Performance P0 verifier
+- [ ] Read-only observation remains responsive under unrelated workspace write load
+- [ ] Reconnect churn returns active MCP session/transport counts to a bounded baseline
 
 ## Production
 

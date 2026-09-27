@@ -131,20 +131,18 @@ export async function resolveActionWorkspaces(
     "fs.delete",
   ]);
 
-  if (fsReads.has(action) || fsWrites.has(action)) {
-    const mode: WorkspaceAccessMode = fsReads.has(action) ? "read" : "write";
-    if (action === "fs.search") {
-      add(stringValue(args, "root_path"), mode, "root_path");
-    } else if (action === "fs.read_many") {
-      const paths =
-        args && typeof args === "object" &&
-        Array.isArray((args as Record<string, unknown>).paths)
-          ? ((args as Record<string, unknown>).paths as unknown[])
-          : [];
-      for (const value of paths) {
-        if (typeof value === "string") add(value, mode, "paths");
-      }
-    } else if (action === "fs.batch_edit") {
+  // Read-only filesystem observation must not be serialized behind a
+  // repository-wide workspace writer. The Action Contract already carries
+  // exact-path shared resources (fs:<path>), so reads still conflict with a
+  // direct write to the same path without being blocked by unrelated shell,
+  // test, or Git activity elsewhere in the repository.
+  if (fsReads.has(action)) {
+    return [];
+  }
+
+  if (fsWrites.has(action)) {
+    const mode: WorkspaceAccessMode = "write";
+    if (action === "fs.batch_edit") {
       const edits =
         args && typeof args === "object" &&
         Array.isArray((args as Record<string, unknown>).edits)

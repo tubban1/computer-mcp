@@ -30,6 +30,8 @@
     "verify:owl-runtime-consumer": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-owl-runtime-consumer.ts",
     "verify:production-runtime": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-production-runtime.ts",
     "verify:production-boundary": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-production-boundary.ts",
+    "verify:performance-p0": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-performance-p0.ts",
+    "benchmark:production": "tsx scripts/benchmark-production-mcp.ts",
     "verify:drain-handoff": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-drain-handoff.ts",
     "verify:fault-recovery": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-fault-recovery.ts",
     "verify:recovery-matrix": "npm run verify:fault-recovery && npm run verify:concurrency && npm run verify:session-adapters && npm run verify:wechat-session && npm run verify:state-schema",
