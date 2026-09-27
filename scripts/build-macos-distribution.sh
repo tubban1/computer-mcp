@@ -5,6 +5,7 @@ ROOT="${0:A:h}/.."
 VERSION="$(node -p "require('$ROOT/package.json').version")"
 GIT_SHA="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo source)"
 NODE_VERSION="${COMPUTER_MCP_BUNDLED_NODE_VERSION:-v24.21.0}"
+TUNNEL_VERSION="${COMPUTER_MCP_BUNDLED_TUNNEL_VERSION:-0.0.15}"
 if [[ -n "${MACOS_ARCH:-}" ]]; then
   ARCH="$MACOS_ARCH"
 elif [[ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" == "1" ]]; then
@@ -14,8 +15,8 @@ else
 fi
 
 case "$ARCH" in
-  arm64) NODE_ARCH="arm64"; SWIFT_TARGET="arm64-apple-macos13"; SWIFT_EXEC_ARCH="arm64" ;;
-  x86_64|x64) ARCH="x64"; NODE_ARCH="x64"; SWIFT_TARGET="x86_64-apple-macos13"; SWIFT_EXEC_ARCH="x86_64" ;;
+  arm64) NODE_ARCH="arm64"; TUNNEL_ARCH="arm64"; TUNNEL_SHA256="e416ea9ea13e1b8be0d0a355fbd28143cfa55fe5a32b2986fce1a516d7b5e2ad"; SWIFT_TARGET="arm64-apple-macos13"; SWIFT_EXEC_ARCH="arm64" ;;
+  x86_64|x64) ARCH="x64"; NODE_ARCH="x64"; TUNNEL_ARCH="amd64"; TUNNEL_SHA256="2d3a2b3a985ad2fcfddc4a82a0caa6624ee9383e7d85e82563bf1fe3ce905794"; SWIFT_TARGET="x86_64-apple-macos13"; SWIFT_EXEC_ARCH="x86_64" ;;
   *) echo "Unsupported macOS architecture: $ARCH" >&2; exit 2 ;;
 esac
 
@@ -25,6 +26,7 @@ PAYLOAD="$BUILD_ROOT/Computer-MCP-$VERSION-macOS-$ARCH"
 APP="$PAYLOAD/Computer MCP Runtime.app"
 HELPER_APP="$PAYLOAD/Computer MCP Helper.app"
 NODE_PAYLOAD="$PAYLOAD/node-runtime"
+TUNNEL_PAYLOAD="$PAYLOAD/tunnel-runtime"
 SERVER_PAYLOAD="$PAYLOAD/server-release"
 OUT_DIR="$ROOT/dist-packages"
 ZIP="$OUT_DIR/Computer-MCP-$VERSION-macOS-$ARCH.zip"
@@ -33,9 +35,12 @@ NODE_TARBALL="node-$NODE_VERSION-darwin-$NODE_ARCH.tar.gz"
 NODE_URL="https://nodejs.org/dist/$NODE_VERSION/$NODE_TARBALL"
 NODE_SHASUM_URL="https://nodejs.org/dist/$NODE_VERSION/SHASUMS256.txt"
 NODE_ARCHIVE="$CACHE_DIR/$NODE_TARBALL"
+TUNNEL_ZIP_NAME="tunnel-client-runtime-v$TUNNEL_VERSION-darwin-$TUNNEL_ARCH.zip"
+TUNNEL_URL="https://github.com/openai/tunnel-client/releases/download/v$TUNNEL_VERSION/$TUNNEL_ZIP_NAME"
+TUNNEL_ARCHIVE="$CACHE_DIR/$TUNNEL_ZIP_NAME"
 
 rm -rf "$BUILD_ROOT"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$HELPER_APP/Contents/MacOS" "$HELPER_APP/Contents/Resources" "$NODE_PAYLOAD/bin" "$SERVER_PAYLOAD" "$OUT_DIR" "$CACHE_DIR"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$HELPER_APP/Contents/MacOS" "$HELPER_APP/Contents/Resources" "$NODE_PAYLOAD/bin" "$TUNNEL_PAYLOAD" "$SERVER_PAYLOAD" "$OUT_DIR" "$CACHE_DIR"
 
 echo "Building Computer MCP $VERSION macOS $ARCH distribution"
 echo "  bundled Node: $NODE_VERSION ($NODE_ARCH)"
@@ -61,6 +66,47 @@ cp "$NODE_ROOT/bin/node" "$NODE_PAYLOAD/bin/node"
 chmod 755 "$NODE_PAYLOAD/bin/node"
 cp "$NODE_ROOT/LICENSE" "$NODE_PAYLOAD/LICENSE"
 printf '%s\n' "$NODE_VERSION" > "$NODE_PAYLOAD/VERSION"
+
+echo "  bundled OpenAI Tunnel Client: v$TUNNEL_VERSION ($TUNNEL_ARCH)"
+if [[ ! -f "$TUNNEL_ARCHIVE" ]]; then
+  curl -fL --retry 3 --connect-timeout 10 "$TUNNEL_URL" -o "$TUNNEL_ARCHIVE"
+fi
+ACTUAL_TUNNEL_SHA256="$(shasum -a 256 "$TUNNEL_ARCHIVE" | awk '{print $1}')"
+[[ "$ACTUAL_TUNNEL_SHA256" == "$TUNNEL_SHA256" ]] || {
+  echo "OpenAI Tunnel Client checksum mismatch." >&2
+  echo "expected: $TUNNEL_SHA256" >&2
+  echo "actual:   $ACTUAL_TUNNEL_SHA256" >&2
+  exit 1
+}
+
+TUNNEL_EXTRACT="$BUILD_ROOT/tunnel-extract"
+rm -rf "$TUNNEL_EXTRACT"
+mkdir -p "$TUNNEL_EXTRACT"
+ditto -x -k "$TUNNEL_ARCHIVE" "$TUNNEL_EXTRACT"
+TUNNEL_BIN_SOURCE="$(find "$TUNNEL_EXTRACT" -type f -name tunnel-client-runtime -perm -111 | head -n 1)"
+[[ -n "$TUNNEL_BIN_SOURCE" ]] || {
+  echo "OpenAI Tunnel Client executable was not found in $TUNNEL_ZIP_NAME" >&2
+  exit 1
+}
+TUNNEL_SOURCE_DIR="$(dirname "$TUNNEL_BIN_SOURCE")"
+ditto "$TUNNEL_SOURCE_DIR" "$TUNNEL_PAYLOAD"
+chmod 755 "$TUNNEL_PAYLOAD/tunnel-client-runtime"
+[[ -f "$TUNNEL_PAYLOAD/LICENSE" ]] || {
+  echo "OpenAI Tunnel Client LICENSE missing from upstream archive." >&2
+  exit 1
+}
+[[ -f "$TUNNEL_PAYLOAD/NOTICE" ]] || {
+  echo "OpenAI Tunnel Client NOTICE missing from upstream archive." >&2
+  exit 1
+}
+printf '%s\n' "$TUNNEL_VERSION" > "$TUNNEL_PAYLOAD/VERSION"
+cat > "$TUNNEL_PAYLOAD/SOURCE.txt" <<EOF
+OpenAI Tunnel Client
+source: $TUNNEL_URL
+version: v$TUNNEL_VERSION
+sha256: $TUNNEL_SHA256
+license: Apache-2.0 (see LICENSE)
+EOF
 
 xcrun swiftc -O -target "$SWIFT_TARGET" "$HOST_DIR/ComputerMCPRuntime.swift" -o "$APP/Contents/MacOS/ComputerMCPRuntime"
 cp "$HOST_DIR/Info.plist" "$APP/Contents/Info.plist"
@@ -114,6 +160,11 @@ ditto "$ROOT/dist" "$SERVER_PAYLOAD/dist"
   npm ci --omit=dev --ignore-scripts >/dev/null
 )
 rm -rf "$SERVER_PAYLOAD/node_modules/.cache" 2>/dev/null || true
+mkdir -p "$SERVER_PAYLOAD/scripts"
+cp "$ROOT/scripts/tunnel-client.sh" "$SERVER_PAYLOAD/scripts/tunnel-client.sh"
+cp "$ROOT/scripts/tunnel-service.sh" "$SERVER_PAYLOAD/scripts/tunnel-service.sh"
+cp "$ROOT/scripts/helper-service.sh" "$SERVER_PAYLOAD/scripts/helper-service.sh"
+chmod 755 "$SERVER_PAYLOAD/scripts/tunnel-client.sh" "$SERVER_PAYLOAD/scripts/tunnel-service.sh" "$SERVER_PAYLOAD/scripts/helper-service.sh"
 printf '%s\n' "$VERSION" > "$SERVER_PAYLOAD/VERSION"
 printf '%s\n' "$GIT_SHA" > "$SERVER_PAYLOAD/GIT_SHA"
 
@@ -125,10 +176,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 APP_SOURCE="$HERE/Computer MCP Runtime.app"
 HELPER_SOURCE="$HERE/Computer MCP Helper.app"
 NODE_SOURCE="$HERE/node-runtime"
+TUNNEL_SOURCE="$HERE/tunnel-runtime"
 SERVER_SOURCE="$HERE/server-release"
 APP_DEST="$HOME/Applications/Computer MCP Runtime.app"
 HELPER_DEST="$HOME/Applications/Computer MCP Helper.app"
 AGENTOS_HOME="$HOME/.agentos"
+COMPUTER_MCP_HOME="$HOME/.computer-mcp"
 RELEASES="$AGENTOS_HOME/releases"
 CURRENT="$AGENTOS_HOME/current"
 ENV_FILE="$AGENTOS_HOME/runtime.env"
@@ -137,7 +190,11 @@ LABEL="com.agentos.runtime"
 
 VERSION="$(cat "$SERVER_SOURCE/VERSION")"
 SHA="$(cat "$SERVER_SOURCE/GIT_SHA")"
-ARCH="$(uname -m)"
+if [[ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" == "1" ]]; then
+  ARCH="arm64"
+else
+  ARCH="$(uname -m)"
+fi
 case "$ARCH" in
   arm64) EXPECTED_NODE="arm64" ;;
   x86_64) EXPECTED_NODE="x86_64" ;;
@@ -146,6 +203,8 @@ esac
 
 NODE_VERSION="$(cat "$NODE_SOURCE/VERSION")"
 NODE_BIN="$NODE_SOURCE/bin/node"
+TUNNEL_VERSION="$(cat "$TUNNEL_SOURCE/VERSION")"
+TUNNEL_BIN_SOURCE="$TUNNEL_SOURCE/tunnel-client-runtime"
 ACTUAL_NODE="$(file "$NODE_BIN")"
 if [[ "$ACTUAL_NODE" != *"$EXPECTED_NODE"* ]]; then
   echo "This package does not match this Mac architecture."
@@ -154,7 +213,16 @@ if [[ "$ACTUAL_NODE" != *"$EXPECTED_NODE"* ]]; then
   exit 2
 fi
 
-mkdir -p "$HOME/Applications" "$RELEASES" "$AGENTOS_HOME/logs" "$AGENTOS_HOME/node" "$(dirname "$PLIST")"
+ACTUAL_TUNNEL="$(file "$TUNNEL_BIN_SOURCE")"
+if [[ "$ACTUAL_TUNNEL" != *"$EXPECTED_NODE"* ]]; then
+  echo "Bundled OpenAI Tunnel Client does not match this Mac architecture."
+  echo "  Mac: $ARCH"
+  echo "  tunnel: $ACTUAL_TUNNEL"
+  exit 2
+fi
+
+mkdir -p "$HOME/Applications" "$RELEASES" "$AGENTOS_HOME/logs" "$AGENTOS_HOME/node" "$AGENTOS_HOME/tunnel" "$COMPUTER_MCP_HOME/tunnel" "$COMPUTER_MCP_HOME/secrets" "$COMPUTER_MCP_HOME/logs" "$(dirname "$PLIST")"
+chmod 700 "$COMPUTER_MCP_HOME" "$COMPUTER_MCP_HOME/tunnel" "$COMPUTER_MCP_HOME/secrets" "$COMPUTER_MCP_HOME/logs"
 
 if [[ -d "$APP_DEST" ]]; then
   INSTALLED_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)"
@@ -189,6 +257,14 @@ ditto "$NODE_SOURCE" "$NODE_DEST"
 BUNDLED_NODE="$NODE_DEST/bin/node"
 "$BUNDLED_NODE" -v >/dev/null
 
+TUNNEL_DEST="$AGENTOS_HOME/tunnel/v$TUNNEL_VERSION-$ARCH"
+rm -rf "$TUNNEL_DEST"
+mkdir -p "$TUNNEL_DEST"
+ditto "$TUNNEL_SOURCE" "$TUNNEL_DEST"
+BUNDLED_TUNNEL="$TUNNEL_DEST/tunnel-client-runtime"
+chmod 755 "$BUNDLED_TUNNEL"
+"$BUNDLED_TUNNEL" --version >/dev/null
+
 RELEASE="$RELEASES/$VERSION-$SHA"
 rm -rf "$RELEASE"
 ditto "$SERVER_SOURCE" "$RELEASE"
@@ -210,6 +286,37 @@ MACOS_HELPER_MODE=required
 ENVEOF
 fi
 chmod 600 "$ENV_FILE"
+
+TUNNEL_CONFIG_DIR="$COMPUTER_MCP_HOME/tunnel"
+TUNNEL_SECRETS_DIR="$COMPUTER_MCP_HOME/secrets"
+TUNNEL_ID_FILE="$TUNNEL_CONFIG_DIR/tunnel-id"
+TUNNEL_RUNTIME_FILE="$TUNNEL_CONFIG_DIR/runtime-path"
+TUNNEL_MCP_URL_FILE="$TUNNEL_CONFIG_DIR/mcp-server-url"
+TUNNEL_API_KEY_FILE="$TUNNEL_SECRETS_DIR/openai-api-key"
+
+umask 077
+printf '%s\n' "$BUNDLED_TUNNEL" > "$TUNNEL_RUNTIME_FILE"
+printf '%s\n' "http://127.0.0.1:8787/mcp" > "$TUNNEL_MCP_URL_FILE"
+chmod 600 "$TUNNEL_RUNTIME_FILE" "$TUNNEL_MCP_URL_FILE"
+
+if [[ ! -s "$TUNNEL_API_KEY_FILE" ]]; then
+  legacy_keys=("$HOME"/tunnel-client-runtime-v*-darwin-*/openai-api-key(N))
+  if (( ${#legacy_keys[@]} > 0 )) && [[ -s "${legacy_keys[1]}" ]]; then
+    cp "${legacy_keys[1]}" "$TUNNEL_API_KEY_FILE"
+    chmod 600 "$TUNNEL_API_KEY_FILE"
+    echo "Migrated existing OpenAI Tunnel API key into Computer MCP secure config."
+  fi
+fi
+
+if [[ -s "$TUNNEL_ID_FILE" && -s "$TUNNEL_API_KEY_FILE" ]]; then
+  echo "Existing Tunnel ID and API key found; preserving them."
+else
+  echo
+  echo "Configure ChatGPT Secure MCP Tunnel:"
+  COMPUTER_MCP_TUNNEL_HOME="$COMPUTER_MCP_HOME" \
+  TUNNEL_CLIENT_RUNTIME_BIN="$BUNDLED_TUNNEL" \
+  bash "$CURRENT/scripts/tunnel-client.sh" setup
+fi
 
 RUNTIME_HOST_BIN="$APP_DEST/Contents/MacOS/ComputerMCPRuntime"
 
@@ -248,9 +355,22 @@ for _ in {1..40}; do
   if curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:8787/health >/tmp/computer-mcp-install-health.$$ 2>/dev/null; then
     echo "Computer MCP $VERSION is running."
     rm -f /tmp/computer-mcp-install-health.$$
-    mkdir -p "$HOME/.computer-mcp"
-    chmod 700 "$HOME/.computer-mcp"
-    open -gj "$HELPER_DEST" --args --serve >/dev/null 2>&1 || true
+
+    COMPUTER_MCP_HOME="$COMPUTER_MCP_HOME" \
+      zsh "$CURRENT/scripts/helper-service.sh" install
+
+    COMPUTER_MCP_TUNNEL_HOME="$COMPUTER_MCP_HOME" \
+    COMPUTER_MCP_TUNNEL_FORCE_SERVICE=true \
+      zsh "$CURRENT/scripts/tunnel-service.sh" install
+
+    echo
+    zsh "$CURRENT/scripts/helper-service.sh" status || true
+    COMPUTER_MCP_TUNNEL_HOME="$COMPUTER_MCP_HOME" \
+      zsh "$CURRENT/scripts/tunnel-service.sh" status || true
+
+    echo
+    echo "Computer MCP $VERSION installation is complete."
+    echo "Runtime Server, OpenAI Tunnel Client, and Helper are configured to start automatically."
     echo
     echo "One-time macOS permissions:"
     echo "  Full Disk Access -> Computer MCP Runtime"
@@ -270,22 +390,34 @@ chmod 755 "$PAYLOAD/Install Computer MCP.command"
 cat > "$PAYLOAD/README.txt" <<EOF
 Computer MCP $VERSION — macOS $ARCH
 
-This package is self-contained for the Computer MCP core:
+This package is self-contained for Computer MCP:
 - Computer MCP Runtime.app (stable file-permission identity)
 - Computer MCP Helper.app (stable Accessibility/Screen Recording identity)
 - bundled official Node.js $NODE_VERSION
+- bundled OpenAI Tunnel Client v$TUNNEL_VERSION
 - compiled Computer MCP server
 - production npm dependencies
 - installer and checksum
 
-Target Mac does NOT need Node.js, npm, TypeScript, Homebrew, or the source repository.
+Target Mac does NOT need Node.js, npm, TypeScript, Homebrew, the source repository,
+or a separate Tunnel Client download.
 
-One-time macOS permissions after install:
+First install:
+- enter the ChatGPT Tunnel ID
+- enter the OpenAI API key (input is hidden)
+The API key is stored in a mode-0600 local secret file and passed to the Tunnel Client
+through a file reference, not as plaintext in the launchd command.
+
+After install, Runtime Server, Tunnel Client, and Helper start automatically.
+
+One-time macOS permissions:
 - Full Disk Access -> Computer MCP Runtime
 - Accessibility -> Computer MCP Helper
 - Screen & System Audio Recording -> Computer MCP Helper
 
-Secure MCP Tunnel for ChatGPT remote connectivity is a separate external component and is not redistributed in this package.
+OpenAI Tunnel Client is redistributed under Apache-2.0. Its LICENSE, NOTICE,
+third-party license report, SPDX metadata, source URL, and SHA-256 provenance are
+included under tunnel-runtime/.
 EOF
 
 rm -f "$ZIP" "$ZIP.sha256"

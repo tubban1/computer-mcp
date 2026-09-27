@@ -1,1 +1,1 @@
-export const AGENTOS_RUNTIME_VERSION = "1.0.3";
+export const AGENTOS_RUNTIME_VERSION = "1.0.4";

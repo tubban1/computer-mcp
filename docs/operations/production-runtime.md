@@ -143,7 +143,7 @@ A healthy production response should report:
 ```json
 {
   "ok": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "runtime": {
     "mode": "production"
   }

@@ -1,8 +1,16 @@
 # Tunnel client setup
 
-Computer MCP keeps tunnel setup separate from the production Runtime lifecycle. Configuring or restarting the tunnel must not rebuild, reinstall, or promote the Computer MCP server or Native Helper.
+Computer MCP keeps tunnel credentials and service lifecycle separate from Server promotion. Configuring or restarting the tunnel must not rebuild, reinstall, or promote the Computer MCP Server or stable permission-bearing apps.
 
-## One-time setup
+## Packaged macOS install
+
+Computer MCP 1.0.4+ bundles the official OpenAI Tunnel Client runtime. A normal end-user install does not require a separate Tunnel Client download.
+
+The first install reuses existing saved credentials when present. Otherwise it asks once for the Tunnel ID and control-plane API key, saves them locally, and installs the tunnel as a launchd background service. Runtime Server, Tunnel Client, and Helper are then configured to start automatically.
+
+The bundled upstream LICENSE, NOTICE, third-party license report, SPDX metadata, source URL, and SHA-256 provenance are retained in the distribution.
+
+## Source/development one-time setup
 
 Run:
 

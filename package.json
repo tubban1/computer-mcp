@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -59,6 +59,10 @@
     "tunnel:service:status": "zsh scripts/tunnel-service.sh status",
     "tunnel:service:stop": "zsh scripts/tunnel-service.sh stop",
     "tunnel:service:restart": "zsh scripts/tunnel-service.sh restart",
+    "helper:service:install": "zsh scripts/helper-service.sh install",
+    "helper:service:status": "zsh scripts/helper-service.sh status",
+    "helper:service:stop": "zsh scripts/helper-service.sh stop",
+    "helper:service:restart": "zsh scripts/helper-service.sh restart",
     "verify:onboarding": "zsh scripts/verify-chatgpt-onboarding.sh",
     "permissions:status": "zsh scripts/configure-production-access.sh status",
     "permissions:standard": "zsh scripts/configure-production-access.sh standard",

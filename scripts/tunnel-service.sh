@@ -47,6 +47,18 @@ manual_tunnel_running() {
   ps ax -o command= 2>/dev/null | grep '[t]unnel-client-runtime run' | grep -Fq -- "--control-plane.tunnel-id $tunnel_id"
 }
 
+stop_matching_manual_tunnels() {
+  local tunnel_id="${TUNNEL_ID:-$(read_value "$TUNNEL_ID_FILE" 2>/dev/null || true)}"
+  [[ -n "$tunnel_id" ]] || return 0
+  while IFS= read -r line; do
+    local pid="${line%% *}"
+    local command="${line#* }"
+    if [[ "$command" == *"tunnel-client-runtime run"* && "$command" == *"--control-plane.tunnel-id $tunnel_id"* ]]; then
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+    fi
+  done < <(ps ax -o pid=,command= | sed -E 's/^[[:space:]]+//')
+}
+
 load_config() {
   TUNNEL_ID="$(read_value "$TUNNEL_ID_FILE" 2>/dev/null || true)"
   RUNTIME="$(read_value "$RUNTIME_FILE" 2>/dev/null || true)"
@@ -79,6 +91,8 @@ write_plist() {
     <string>$(xml_escape "$TUNNEL_ID")</string>
     <string>--mcp.server-url</string>
     <string>url=$(xml_escape "$MCP_URL")</string>
+    <string>--mcp.startup-wait-timeout</string>
+    <string>30s</string>
     <string>--health.listen-addr</string>
     <string>127.0.0.1:0</string>
     <string>--health.url-file</string>
@@ -117,14 +131,28 @@ install_service() {
     return 0
   fi
 
-  if ! service_loaded && manual_tunnel_running && [[ "${COMPUTER_MCP_TUNNEL_FORCE_SERVICE:-false}" != "true" ]]; then
-    printf 'Existing tunnel-client process detected; reusing it without interruption.\n'
-    printf 'Launchd service definition is ready for the next restart.\n'
-    return 0
+  if ! service_loaded && manual_tunnel_running; then
+    if [[ "${COMPUTER_MCP_TUNNEL_FORCE_SERVICE:-false}" == "true" ]]; then
+      printf 'Existing tunnel-client process detected; handing it over to launchd.\n'
+      stop_matching_manual_tunnels
+      sleep 0.5
+    else
+      printf 'Existing tunnel-client process detected; reusing it without interruption.\n'
+      printf 'Launchd service definition is ready for the next restart.\n'
+      return 0
+    fi
   fi
 
   launchctl bootout "gui/$UID/$SERVICE_LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$UID" "$SERVICE_PLIST"
+  local bootstrapped=false
+  for _ in {1..5}; do
+    if launchctl bootstrap "gui/$UID" "$SERVICE_PLIST" >/dev/null 2>&1; then
+      bootstrapped=true
+      break
+    fi
+    sleep 0.5
+  done
+  [[ "$bootstrapped" == "true" ]] || die "launchd bootstrap failed for $SERVICE_LABEL"
   launchctl kickstart -k "gui/$UID/$SERVICE_LABEL"
   printf 'Tunnel background service installed: %s\n' "$SERVICE_LABEL"
 }
