@@ -4,6 +4,7 @@ This directory is organized by document purpose rather than release chronology.
 
 ## Start here
 
+- [v1.0.0 release](releases/v1.0.0.md)
 - [Architecture overview](architecture/overview.md)
 - [Layer model](architecture/layers.md)
 - [v1.0 roadmap](roadmap/v1.0.md)

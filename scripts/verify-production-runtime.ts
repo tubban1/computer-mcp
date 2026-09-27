@@ -99,7 +99,7 @@ try {
 
   assert.equal(health.ok, true);
   assert.equal(health.service, "computer-mcp");
-  assert.equal(health.version, "1.0.0-rc.1");
+  assert.equal(health.version, "1.0.0");
   for (const contractName of [
     "primitiveAbi",
     "skillAbi",
@@ -152,7 +152,7 @@ try {
   assert.equal(health.runtime?.stateSchema?.readable, true);
   assert.equal(health.runtime?.stateSchema?.migrationRequired, true);
 
-  assert.match(stdout, /computer-mcp v1\.0\.0-rc\.1 listening/);
+  assert.match(stdout, /computer-mcp v1\.0\.0 listening/);
   assert.doesNotMatch(stdout, /tsx watch/);
 
   console.log(
