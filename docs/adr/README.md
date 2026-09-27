@@ -21,3 +21,4 @@ Current ADRs:
 - [0006 — Production upgrade protocol](0006-production-upgrade-protocol.md)
 - [0007 — Versioned durable state](0007-versioned-durable-state.md)
 - [0008 — Durable side-effect replay](0008-durable-side-effect-replay.md)
+- [0009 — Personal MCP stability boundary](0009-personal-mcp-stability.md)

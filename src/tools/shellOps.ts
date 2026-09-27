@@ -6,6 +6,7 @@ import { assertAllowedExistingPath } from "../security/pathGuard.js";
 import { requireCapability } from "../security/capabilities.js";
 import {
   currentExecutionContext,
+  executionOwnerIdentity,
   type ExecutionContext,
 } from "../runtime/executionContext.js";
 import {
@@ -55,13 +56,50 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+function processOwnerIdentity(record: ManagedProcessRecord): string {
+  return record.ownerIdentity ?? record.ownerSessionId;
+}
+
 function processOwnerMatches(
   record: ManagedProcessRecord,
   context: ExecutionContext = currentExecutionContext(),
 ): boolean {
   if (record.ownerTaskId && context.taskId === record.ownerTaskId) return true;
-  if (record.ownerSessionId === context.sessionId) return true;
+  if (processOwnerIdentity(record) === executionOwnerIdentity(context)) return true;
   return context.origin === "system" && context.sessionId === "runtime:system";
+}
+
+function processOwnerIsActive(record: ManagedProcessRecord): boolean {
+  if (record.ownerIdentity) {
+    return runtimeSessionManager.ownerStatus(record.ownerIdentity).activeSessions > 0;
+  }
+  const session = runtimeSessionManager.status(record.ownerSessionId);
+  return Boolean(session && !session.disconnectedAt);
+}
+
+function signalProcessTree(
+  pid: number,
+  signal: NodeJS.Signals,
+  child?: ChildProcess,
+): boolean {
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, signal);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH" && code !== "EINVAL") throw error;
+    }
+  }
+
+  if (child) return child.kill(signal);
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
 }
 
 function assertProcessOwner(record: ManagedProcessRecord) {
@@ -105,12 +143,25 @@ async function reconcileRecord(
   }
 
   if (pidAlive(record.pid)) {
+    let changed = false;
     if (record.runtimeInstanceId !== runtimeInstanceId) {
       record.runtimeInstanceId = runtimeInstanceId;
       record.recoveredAfterRestart = true;
       record.inputAvailable = false;
-      await writeManagedProcess(record);
+      changed = true;
     }
+
+    if (!record.ownerTaskId && !processOwnerIsActive(record)) {
+      if (!record.orphanedAt) {
+        record.orphanedAt = new Date().toISOString();
+        changed = true;
+      }
+    } else if (record.orphanedAt && processOwnerIsActive(record)) {
+      record.orphanedAt = undefined;
+      changed = true;
+    }
+
+    if (changed) await writeManagedProcess(record);
     return record;
   }
 
@@ -148,6 +199,13 @@ export async function executeCommand(
 ) {
   requireCapability("ALLOW_SHELL", false);
   const safeCwd = await assertAllowedExistingPath(cwd);
+  const executionSignal = currentExecutionContext().signal;
+
+  if (executionSignal?.aborted) {
+    const error = new Error("Shell command cancelled before start.");
+    error.name = "AbortError";
+    throw error;
+  }
 
   return await new Promise<{
     command: string;
@@ -157,16 +215,39 @@ export async function executeCommand(
     stdout: string;
     stderr: string;
     timedOut: boolean;
+    cancelled: boolean;
   }>((resolve, reject) => {
     const child = spawn(shellBinary(), ["-lc", command], {
       cwd: safeCwd,
       env: process.env,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let cancelled = false;
+    let terminationStarted = false;
+    let timer: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+
+    const terminate = (reason: "timeout" | "cancelled") => {
+      if (terminationStarted) return;
+      terminationStarted = true;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "cancelled") cancelled = true;
+      if (child.pid) {
+        signalProcessTree(child.pid, "SIGTERM", child);
+        killTimer = setTimeout(() => {
+          if (child.pid) signalProcessTree(child.pid, "SIGKILL", child);
+        }, 2_000);
+        killTimer.unref();
+      }
+    };
+
+    const onAbort = () => terminate("cancelled");
+    executionSignal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk) => {
       stdout = appendCapped(stdout, chunk);
@@ -174,16 +255,25 @@ export async function executeCommand(
     child.stderr?.on("data", (chunk) => {
       stderr = appendCapped(stderr, chunk);
     });
-    child.on("error", reject);
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
-    }, Math.min(Math.max(timeoutMs, 1_000), 10 * 60_000));
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      executionSignal?.removeEventListener("abort", onAbort);
+    };
 
-    child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
+    child.once("error", (error) => {
+      cleanup();
+      reject(error);
+    });
+
+    timer = setTimeout(
+      () => terminate("timeout"),
+      Math.min(Math.max(timeoutMs, 1_000), 10 * 60_000),
+    );
+
+    child.once("close", (exitCode, signal) => {
+      cleanup();
       resolve({
         command,
         cwd: safeCwd,
@@ -192,6 +282,7 @@ export async function executeCommand(
         stdout,
         stderr,
         timedOut,
+        cancelled,
       });
     });
   });
@@ -261,6 +352,7 @@ export async function startProcess(
     workspaceMode,
     ...(workspaceLeaseId ? { workspaceLeaseId } : {}),
     ownerSessionId: context.sessionId,
+    ownerIdentity: executionOwnerIdentity(context),
     ...(context.taskId ? { ownerTaskId: context.taskId } : {}),
     startedAt: now,
     updatedAt: now,
@@ -311,6 +403,7 @@ export async function startProcess(
     workspaceMode,
     workspaceLeaseId: record.workspaceLeaseId ?? null,
     ownerSessionId: record.ownerSessionId,
+    ownerIdentity: record.ownerIdentity ?? record.ownerSessionId,
     ownerTaskId: record.ownerTaskId ?? null,
     stdoutPath: record.stdoutPath,
     stderrPath: record.stderrPath,
@@ -330,12 +423,15 @@ export async function listProcesses() {
     workspaceMode: record.workspaceMode,
     workspaceLeaseId: record.workspaceLeaseId ?? null,
     ownerSessionId: record.ownerSessionId,
+    ownerIdentity: record.ownerIdentity ?? record.ownerSessionId,
     ownerTaskId: record.ownerTaskId ?? null,
     startedAt: record.startedAt,
     running: record.status === "running" || record.status === "terminating",
     status: record.status,
     exitCode: record.exitCode ?? null,
     recoveredAfterRestart: record.recoveredAfterRestart ?? false,
+    orphaned: Boolean(record.orphanedAt),
+    orphanedAt: record.orphanedAt ?? null,
     inputAvailable:
       record.inputAvailable && liveChildren.has(record.processId),
   }));
@@ -380,8 +476,9 @@ export async function claimRecoveredProcess(processId: string) {
     (ownerSession?.activeCalls ?? 0) === 0;
   const orphanedByRestart =
     Boolean(record.recoveredAfterRestart) && !liveChildren.has(processId);
+  const orphanedBySessionLoss = Boolean(record.orphanedAt);
 
-  if (!orphanedByRestart && !ownerDisconnected) {
+  if (!orphanedByRestart && !ownerDisconnected && !orphanedBySessionLoss) {
     throw new Error(
       "PROCESS_NOT_ORPHANED: claim requires either a Runtime-recovered process or a disconnected original MCP transport session.",
     );
@@ -390,7 +487,9 @@ export async function claimRecoveredProcess(processId: string) {
   const context = currentExecutionContext();
   const previousOwnerSessionId = record.ownerSessionId;
   record.ownerSessionId = context.sessionId;
+  record.ownerIdentity = executionOwnerIdentity(context);
   record.ownerTaskId = context.taskId;
+  record.orphanedAt = undefined;
   await claimWorkspaceLeaseForRecoveredProcess(processId, context);
   await writeManagedProcess(record);
 
@@ -399,6 +498,7 @@ export async function claimRecoveredProcess(processId: string) {
     claimed: true,
     previousOwnerSessionId,
     ownerSessionId: record.ownerSessionId,
+    ownerIdentity: record.ownerIdentity ?? record.ownerSessionId,
     ownerTaskId: record.ownerTaskId ?? null,
     workspace: record.workspace,
     workspaceLeaseId: record.workspaceLeaseId ?? null,
@@ -422,6 +522,8 @@ export async function getProcessOutput(
     stdout,
     stderr,
     recoveredAfterRestart: record.recoveredAfterRestart ?? false,
+    orphaned: Boolean(record.orphanedAt),
+    orphanedAt: record.orphanedAt ?? null,
   };
 }
 
@@ -442,18 +544,8 @@ export async function killProcess(
     };
   }
 
-  let sent = false;
   const live = liveChildren.get(processId);
-  if (live) {
-    sent = live.child.kill(signal);
-  } else {
-    try {
-      process.kill(record.pid, signal);
-      sent = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    }
-  }
+  const sent = signalProcessTree(record.pid, signal, live?.child);
 
   if (sent) {
     record.status = "terminating";
@@ -474,6 +566,7 @@ export async function reconcilePersistentProcesses() {
   const records = await listManagedProcesses();
   let running = 0;
   let recovered = 0;
+  let orphaned = 0;
   let lost = 0;
 
   for (const record of records) {
@@ -482,6 +575,7 @@ export async function reconcilePersistentProcesses() {
     if (next.status === "running" || next.status === "terminating") {
       running += 1;
       if (next.recoveredAfterRestart) recovered += 1;
+      if (next.orphanedAt) orphaned += 1;
     } else if (before === "running" && next.status === "lost") {
       lost += 1;
     }
@@ -491,6 +585,7 @@ export async function reconcilePersistentProcesses() {
     records: records.length,
     running,
     recovered,
+    orphaned,
     lost,
     storage: getProcessStorageInfo(),
   };

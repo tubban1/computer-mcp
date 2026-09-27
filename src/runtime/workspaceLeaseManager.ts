@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
   currentExecutionContext,
+  executionOwnerIdentity,
   executionOwnerKey,
   type ExecutionContext,
 } from "./executionContext.js";
@@ -29,6 +30,7 @@ export type WorkspaceLeaseRecord = {
   mode: "write";
   ownerKey: string;
   ownerSessionId: string;
+  ownerIdentity?: string;
   ownerTaskId?: string;
   runtimeInstanceId?: string;
   purpose: string;
@@ -86,6 +88,17 @@ async function ensureDir() {
   await fs.chmod(leaseDir(), 0o700).catch(() => undefined);
 }
 
+function leaseOwnerIdentity(lease: WorkspaceLeaseRecord): string {
+  return lease.ownerIdentity ?? lease.ownerSessionId;
+}
+
+function sameLogicalOwner(
+  lease: WorkspaceLeaseRecord,
+  context: ExecutionContext,
+): boolean {
+  return leaseOwnerIdentity(lease) === executionOwnerIdentity(context);
+}
+
 function ownerMatches(
   lease: WorkspaceLeaseRecord,
   context: ExecutionContext,
@@ -93,12 +106,21 @@ function ownerMatches(
   if (lease.ownerTaskId) {
     if (context.taskId === lease.ownerTaskId) return true;
 
-    // A session-level lease can be promoted into the first durable task from
-    // the same originating MCP session, but separate tasks never share write
-    // ownership merely because they came from the same chat.
+    // A transaction is a checkpoint/rollback boundary for the creating logical
+    // owner, not a separate agent. Ordinary tools from that same owner must be
+    // able to make the edits the transaction is protecting.
+    if (
+      lease.ownerTaskId.startsWith("transaction:") &&
+      sameLogicalOwner(lease, context)
+    ) {
+      return true;
+    }
+
+    // Separate durable Tasks/Processes never share write ownership merely
+    // because they came from the same chat/client.
     return false;
   }
-  return lease.ownerSessionId === context.sessionId;
+  return sameLogicalOwner(lease, context);
 }
 
 function staleSessionLeaseFromPreviousRuntime(
@@ -134,10 +156,15 @@ function staleDisconnectedSessionLease(
   if (lease.ownerTaskId || lease.pinnedProcessIds.length > 0) return false;
   if (lease.runtimeInstanceId !== workspaceRuntimeInstanceId) return false;
 
-  const ownerSession = runtimeSessionManager.status(lease.ownerSessionId);
-  if (!ownerSession?.disconnectedAt || ownerSession.activeCalls > 0) {
+  const ownerStatus = runtimeSessionManager.ownerStatus(
+    leaseOwnerIdentity(lease),
+  );
+  if (ownerStatus.activeSessions > 0 || ownerStatus.activeCalls > 0) {
     return false;
   }
+
+  const ownerSession = runtimeSessionManager.status(lease.ownerSessionId);
+  if (!ownerSession?.disconnectedAt) return false;
 
   const disconnectedAt = Date.parse(ownerSession.disconnectedAt);
   if (!Number.isFinite(disconnectedAt)) return false;
@@ -151,16 +178,14 @@ function staleIdleSessionLease(
   if (lease.ownerTaskId || lease.pinnedProcessIds.length > 0) return false;
   if (lease.runtimeInstanceId !== workspaceRuntimeInstanceId) return false;
 
-  const ownerSession = runtimeSessionManager.status(lease.ownerSessionId);
-  if (
-    !ownerSession ||
-    ownerSession.disconnectedAt ||
-    ownerSession.activeCalls > 0
-  ) {
+  const ownerStatus = runtimeSessionManager.ownerStatus(
+    leaseOwnerIdentity(lease),
+  );
+  if (ownerStatus.activeSessions === 0 || ownerStatus.activeCalls > 0) {
     return false;
   }
 
-  const lastActivityAt = Date.parse(ownerSession.lastActivityAt);
+  const lastActivityAt = Date.parse(ownerStatus.lastActivityAt ?? "");
   if (!Number.isFinite(lastActivityAt)) return false;
   return now >= lastActivityAt + idleSessionReclaimMs();
 }
@@ -295,7 +320,7 @@ export async function ensureWorkspaceWriteLease(
         const promotable = (record: WorkspaceLeaseRecord) =>
           !record.ownerTaskId &&
           Boolean(context.taskId) &&
-          record.ownerSessionId === context.sessionId;
+          sameLogicalOwner(record, context);
         const conflict = overlapping.find(
           (record) =>
             !ownerMatches(record, context) && !promotable(record),
@@ -328,6 +353,7 @@ export async function ensureWorkspaceWriteLease(
           mode: "write",
           ownerKey,
           ownerSessionId: context.sessionId,
+          ownerIdentity: executionOwnerIdentity(context),
           ...(context.taskId ? { ownerTaskId: context.taskId } : {}),
           runtimeInstanceId: workspaceRuntimeInstanceId,
           purpose:
@@ -498,11 +524,7 @@ export async function releaseWorkspaceLease(
     const current = await activeLease(workspace);
     if (!current) return { released: false, workspace, reason: "no_lease" };
 
-    if (
-      options?.force !== true &&
-      !ownerMatches(current, context) &&
-      current.ownerSessionId !== context.sessionId
-    ) {
+    if (options?.force !== true && !ownerMatches(current, context)) {
       throw new WorkspaceBusyError(current);
     }
 
@@ -536,6 +558,30 @@ export async function releaseWorkspaceLeasesForTask(
         record.expiresAt = new Date(0).toISOString();
         record.purpose =
           `Task ${taskId} ended; release after pinned process exits`;
+        await writeLease(record);
+      }
+    }
+    return released;
+  });
+}
+
+export async function releaseWorkspaceLeasesForOwner(
+  ownerIdentity: string,
+): Promise<number> {
+  return await serialized(async () => {
+    const records = await listWorkspaceLeasesUnsafe();
+    let released = 0;
+    for (const record of records) {
+      if (leaseOwnerIdentity(record) !== ownerIdentity || record.ownerTaskId) {
+        continue;
+      }
+      if (record.pinnedProcessIds.length === 0) {
+        await deleteLease(record.workspace);
+        released += 1;
+      } else {
+        record.expiresAt = new Date(0).toISOString();
+        record.purpose =
+          `Owner ${ownerIdentity} disconnected; release after pinned process exits`;
         await writeLease(record);
       }
     }
@@ -631,6 +677,7 @@ export async function claimWorkspaceLeaseForRecoveredProcess(
       ? context
       : { ...context, taskId: `process:${processId}` };
     record.ownerSessionId = context.sessionId;
+    record.ownerIdentity = executionOwnerIdentity(context);
     record.ownerTaskId = leaseContext.taskId;
     record.ownerKey = executionOwnerKey(leaseContext);
     record.runtimeInstanceId = workspaceRuntimeInstanceId;
@@ -684,5 +731,7 @@ export function getWorkspaceLeaseStorageInfo() {
     staleActiveSessionReclamation: true,
     sessionIdleReclaimMs: idleSessionReclaimMs(),
     hierarchicalWorkspaceConflicts: true,
+    logicalOwnerIdentity: true,
+    transactionCreatorReentrantOwnership: true,
   };
 }

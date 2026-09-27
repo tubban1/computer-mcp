@@ -10,12 +10,15 @@ export type ExecutionOrigin =
 
 export type ExecutionContext = {
   sessionId: string;
+  transportSessionId?: string;
+  ownerId?: string;
   requestId: string;
   origin: ExecutionOrigin;
   taskId?: string;
   loopId?: string;
   scheduleId?: string;
   tool?: string;
+  signal?: AbortSignal;
 };
 
 const storage = new AsyncLocalStorage<ExecutionContext>();
@@ -32,11 +35,18 @@ export function currentExecutionContext(): ExecutionContext {
   return storage.getStore() ?? systemExecutionContext();
 }
 
+export function executionOwnerIdentity(
+  context: ExecutionContext = currentExecutionContext(),
+): string {
+  return context.ownerId?.trim() || context.sessionId;
+}
+
 export function executionOwnerKey(
   context: ExecutionContext = currentExecutionContext(),
 ): string {
-  return context.taskId
-    ? `task:${context.taskId}`
+  if (context.taskId) return `task:${context.taskId}`;
+  return context.ownerId
+    ? `owner:${executionOwnerIdentity(context)}`
     : `session:${context.sessionId}`;
 }
 
