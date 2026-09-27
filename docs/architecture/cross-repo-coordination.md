@@ -55,7 +55,7 @@ Current local daemon endpoints:
 
 Production calls may require `OWL_RUNTIME_API_TOKEN`.
 
-computer-mcp consumes this through its own thin RuntimeClient adapter. The default backend remains `legacy` until a capability passes the consumer migration gate.
+computer-mcp consumes this through its own thin RuntimeClient adapter. During the **1.x production line**, the production backend is locked to `legacy`. OWL-backed capability work may progress through development/test conformance and dogfood, but that does not authorize a production backend switch.
 
 Configuration:
 
@@ -69,7 +69,7 @@ OWL_RUNTIME_HTTP_TIMEOUT_MS=60000
 
 There is **no silent fallback** from an explicitly selected OWL backend to legacy execution. Silent fallback would make ownership and side effects ambiguous.
 
-## Per-capability migration gate
+## Per-capability development integration gate
 
 A capability moves through:
 
@@ -82,16 +82,16 @@ CONFORMANCE
   ↓
 CONSUMER_COMPATIBILITY
   ↓
-DOGFOOD
+DEV_DOGFOOD
   ↓
-OWL_DEFAULT
-  ↓
-LEGACY_REMOVED
+2_0_CANDIDATE
 ```
 
-Do not wait for all of OWL Runtime 1.0. Migrate independently per capability.
+Do not wait for all of OWL Runtime 1.0 to perform development/test integration. Integrate independently per capability.
 
-Required evidence before `OWL_DEFAULT`:
+**This gate does not switch Computer MCP 1.x production.** A capability reaching `2_0_CANDIDATE` only means it is eligible for the eventual Runtime-backed major-release evaluation.
+
+Required evidence before `2_0_CANDIDATE`:
 
 1. public/versioned Runtime contract;
 2. Runtime conformance test;
@@ -187,13 +187,15 @@ Cross-repo source edits require explicit coordination. Reading another repo's pu
 
 ## Integration cadence
 
-Prefer small migrations:
+Prefer small development integrations:
 
 1. OWL Runtime publishes/stabilizes one public contract.
 2. computer-mcp adds/updates its RuntimeClient adapter.
 3. consumer conformance test runs against the real daemon boundary.
-4. dogfood the capability under explicit opt-in.
-5. switch that capability to OWL by default only after stability evidence.
-6. remove the corresponding legacy implementation later.
+4. dogfood the capability under explicit development/test opt-in.
+5. mark the capability as a 2.0 candidate after stability evidence.
+6. keep Computer MCP 1.x production standalone.
+7. evaluate the complete Runtime-backed architecture at a deliberate 2.0 production promotion gate.
+8. remove legacy implementations only after the Runtime-backed major release has proven stable in production.
 
-This is a strangler migration, not a big-bang rewrite.
+This is a strangler **development migration** combined with a deliberate **major-version production cutover**, not continuous production backend churn.

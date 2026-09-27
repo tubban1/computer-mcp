@@ -2424,6 +2424,11 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+// Validate the production backend architecture lock before opening a
+// listening socket. A stray environment change must not silently convert a
+// 1.x standalone production service into an OWL-backed service.
+getRuntimeClientStatus();
+
 const port = Number(process.env.PORT ?? 8787);
 
 if (candidateMode) {

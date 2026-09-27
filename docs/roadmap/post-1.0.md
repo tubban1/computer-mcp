@@ -1,6 +1,15 @@
 # Post-1.0 Directions
 
-These are intentionally not release blockers for AgentOS Runtime 1.0.
+These are intentionally not release blockers for Computer MCP 1.0.
+
+## Major-version architecture policy
+
+- **1.x** — standalone production; compatibility/performance/reliability fixes only at the backend-architecture level.
+- **2.0 candidate** — first deliberate production cutover to OWL Runtime, only after full compatibility, soak, rollback, and personal dogfood.
+- **2.x** — Runtime-backed stabilization if 2.0 is promoted.
+- **3.0+** — reserve for another deliberate architecture boundary if needed.
+
+Per-capability Runtime integration may proceed during 1.x development, but it does not independently change production.
 
 - event-driven adapters beyond polling
 - additional desktop messaging adapters

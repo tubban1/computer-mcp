@@ -8,6 +8,7 @@ This directory is organized by document purpose rather than release chronology.
 - [Layer model](architecture/layers.md)
 - [v1.0 roadmap](roadmap/v1.0.md)
 - [Production Runtime](operations/production-runtime.md)
+- [Production promotion policy](operations/production-promotion.md)
 - [Concurrency and ownership](architecture/concurrency-and-ownership.md)
 - [computer-mcp ↔ OWL Runtime coordination](architecture/cross-repo-coordination.md)
 
@@ -84,6 +85,7 @@ ADRs explain why important design choices were made, not just what the current c
 - [ADR-0007: Versioned durable state](adr/0007-versioned-durable-state.md)
 - [ADR-0008: Durable side-effect replay](adr/0008-durable-side-effect-replay.md)
 - [ADR-0009: Personal MCP stability boundary](adr/0009-personal-mcp-stability.md)
+- [ADR-0010: Production promotion and Native Helper stability](adr/0010-production-promotion-helper-stability.md)
 
 ## Archive
 

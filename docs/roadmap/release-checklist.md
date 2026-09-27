@@ -32,9 +32,13 @@ Use this checklist for release candidates and stable releases.
 - [ ] Recovery matrix verifier
 - [ ] Soak smoke profile
 - [ ] Production Runtime verifier
+- [ ] Production boundary verifier
 
 ## Production
 
+- [ ] promotion was explicitly initiated (`npm run promote:production`)
+- [ ] no source/dev/CI action auto-promoted production
+- [ ] 1.x backend is standalone/legacy
 - [ ] immutable release created
 - [ ] launchd service healthy
 - [ ] expected version reported
@@ -42,6 +46,10 @@ Use this checklist for release candidates and stable releases.
 - [ ] current release symlink correct
 - [ ] rollback path available
 - [ ] no `tsx watch` process serving production
+- [ ] production Server promotion did not replace macOS Helper
+- [ ] Helper path remains `~/Applications/Computer MCP Helper.app`
+- [ ] Helper Bundle ID remains `fan.fde.computermcp.helper`
+- [ ] no macOS Accessibility/Screen Recording permission regression
 
 ## Data safety
 
@@ -65,3 +73,6 @@ Use this checklist for release candidates and stable releases.
 - [ ] fault-injection suite green
 - [ ] long soak green
 - [ ] ABI/contract freeze documented
+- [ ] 24-hour soak clean
+- [ ] personal dogfood complete
+- [ ] Helper identity/version stability verified

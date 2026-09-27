@@ -143,7 +143,6 @@ Tasks, Scheduler, Browser/Desktop, and high-risk external effects stay on the
 legacy path until each capability passes its own consumer conformance and
 dogfood gate.
 
-The default remains `COMPUTER_MCP_RUNTIME_BACKEND=legacy`. Selecting
-`owl-http` is explicit and has no silent fallback, because silently executing a
-failed Runtime request through another backend would make ownership and side
-effects ambiguous.
+The default remains `COMPUTER_MCP_RUNTIME_BACKEND=legacy`. During Computer MCP 1.x, production is locked to this standalone backend; `owl-http` is development/test dogfood only. Selecting `owl-http` outside production is explicit and has no silent fallback, because silently executing a failed Runtime request through another backend would make ownership and side effects ambiguous.
+
+The first planned production Runtime-backed architecture boundary is Computer MCP 2.0, subject to full-system compatibility, soak, rollback, and personal dogfood evidence.
