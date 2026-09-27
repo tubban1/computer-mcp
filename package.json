@@ -66,7 +66,9 @@
     "verify:permissions-profile": "zsh scripts/verify-permissions-profile.sh",
     "install:runtime-host": "zsh scripts/install-macos-runtime-host.sh",
     "verify:runtime-host": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-runtime-host.ts",
-    "verify:macos-filesystem-access": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-filesystem-access.ts"
+    "verify:macos-filesystem-access": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-filesystem-access.ts",
+    "package:macos": "zsh scripts/build-macos-distribution.sh",
+    "verify:macos-distribution": "zsh scripts/verify-macos-distribution.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
