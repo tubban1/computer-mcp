@@ -36,6 +36,8 @@ The installer uses:
   logs/
 ```
 
+The macOS Native Helper is also outside the release tree and has an independent lifecycle. Ordinary Server promotion must not build, replace, or re-sign `~/Applications/Computer MCP Helper.app`.
+
 Persistent Runtime state remains outside the release tree:
 
 ```text
@@ -54,11 +56,13 @@ For the **first** production installation:
 npm run install:production
 ```
 
-For an existing Runtime that supports graceful drain:
+For an existing production installation, the canonical explicit promotion command is:
 
 ```bash
-npm run upgrade:production
+npm run promote:production
 ```
+
+`npm run upgrade:production` remains a compatibility alias. Neither command is invoked automatically by development, build, test, CI, Git, or OWL Runtime changes.
 
 See [Production upgrades](production-upgrades.md) for candidate preflight, drain, cutover, and rollback semantics.
 
@@ -74,7 +78,7 @@ npm run verify:production-runtime
 git status
 git commit
 git push
-npm run upgrade:production
+npm run promote:production
 ```
 
 The first-install path:
@@ -95,6 +99,8 @@ node <release>/dist/server.js
 ```
 
 not a source watcher. Production normally owns port `8787`; source development defaults to `8788`.
+
+For the Computer MCP 1.x production line, the backend is intentionally standalone/legacy. OWL Runtime HTTP integration is development/test dogfood for a future major release and is rejected in 1.x production.
 
 ## Environment
 
@@ -137,7 +143,7 @@ A healthy production response should report:
 ```json
 {
   "ok": true,
-  "version": "0.9.16",
+  "version": "1.0.0-rc.1",
   "runtime": {
     "mode": "production"
   }
@@ -164,7 +170,7 @@ Production Runtime code is immutable from the Runtime's own filesystem/Git/shell
 
 This prevents a production Jarvis instance from rewriting the same release that is currently executing.
 
-Upgrade by creating a new immutable release. For an existing graceful-drain capable Runtime, prefer `npm run upgrade:production`.
+Upgrade by creating a new immutable release. For an existing graceful-drain capable Runtime, use an explicit `npm run promote:production`. Development and CI must never invoke production promotion automatically.
 
 ## Uninstall
 

@@ -48,6 +48,9 @@ const { withExecutionContext } = await import(
 const { executeRoutedAction } = await import(
   "../src/router/actionRouter.js"
 );
+const { resourceArbiter } = await import(
+  "../src/runtime/resourceArbiter.js"
+);
 const {
   assertWorkspaceWriteAllowed,
   ensureWorkspaceWriteLease,
@@ -58,6 +61,7 @@ const {
 } = await import("../src/runtime/workspaceLeaseManager.js");
 const {
   claimRecoveredProcess,
+  getProcessOutput,
   listProcesses,
   reconcilePersistentProcesses,
 } = await import("../src/tools/shellOps.js");
@@ -172,6 +176,133 @@ try {
   const hierarchicalWallMs = Date.now() - parentStarted;
   assert.ok(hierarchicalWallMs >= 1150);
   assert.ok(childResult.resourceWaitMs >= 800);
+
+  // Observation must stay responsive while unrelated workspace mutation is
+  // active. Exact-path fs resources still protect direct file-vs-file races,
+  // but a broad shell writer must not freeze read_file/list_directory across
+  // the entire repository tree.
+  const observationWriter = withExecutionContext(sessionA, async () =>
+    await executeRoutedAction("shell.exec", {
+      command: "sleep 1.2",
+      cwd: parentWorkspace,
+      workspace_mode: "write",
+      timeout_ms: 10000,
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const observationStarted = Date.now();
+  const [readObservation, listObservation] = await Promise.all([
+    withExecutionContext(sessionB, async () =>
+      await executeRoutedAction("fs.read", { path: fileA }),
+    ),
+    withExecutionContext(sessionB, async () =>
+      await executeRoutedAction("fs.list", { path: parentWorkspace }),
+    ),
+  ]);
+  const observationWallMs = Date.now() - observationStarted;
+  assert.ok(
+    observationWallMs < 500,
+    `read-only observation waited ${observationWallMs}ms behind an unrelated workspace writer`,
+  );
+  assert.ok(readObservation.resourceWaitMs < 250);
+  assert.ok(listObservation.resourceWaitMs < 250);
+  await observationWriter;
+
+  // Removing coarse read workspace locks must not remove exact-path safety.
+  // Hold the same fs:<path> exclusively and prove a read waits until release.
+  const exactPathLease = await resourceArbiter.acquire(
+    "verify-exact-path-write",
+    [{ key: `fs:${fileA}`, mode: "exclusive" }],
+  );
+  let exactPathReadSettled = false;
+  const exactPathRead = withExecutionContext(sessionB, async () =>
+    await executeRoutedAction("fs.read", { path: fileA }),
+  ).then((value) => {
+    exactPathReadSettled = true;
+    return value;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(
+    exactPathReadSettled,
+    false,
+    "same-path read bypassed the exact filesystem write resource",
+  );
+  exactPathLease.release();
+  const exactPathReadResult = await exactPathRead;
+  assert.ok(exactPathReadResult.resourceWaitMs >= 75);
+
+  // Resource waits must honor transport cancellation and leave no ghost
+  // pending request behind.
+  const cancellationBlocker = withExecutionContext(sessionA, async () =>
+    await executeRoutedAction("shell.exec", {
+      command: "sleep 1.0",
+      cwd: parentWorkspace,
+      workspace_mode: "write",
+      timeout_ms: 10000,
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const cancellationController = new AbortController();
+  const cancellationContext = {
+    ...sessionB,
+    requestId: "request-resource-cancel",
+    signal: cancellationController.signal,
+  };
+  const cancellationStarted = Date.now();
+  const cancelledWait = withExecutionContext(cancellationContext, async () =>
+    await executeRoutedAction("shell.exec", {
+      command: "sleep 0.1",
+      cwd: repoA,
+      workspace_mode: "write",
+      timeout_ms: 10000,
+    }),
+  );
+  setTimeout(
+    () => cancellationController.abort(new Error("verify cancellation")),
+    100,
+  ).unref();
+  await assert.rejects(cancelledWait, /RESOURCE_WAIT_CANCELLED/);
+  const cancellationWallMs = Date.now() - cancellationStarted;
+  assert.ok(
+    cancellationWallMs < 750,
+    `cancelled resource wait lingered for ${cancellationWallMs}ms`,
+  );
+  assert.equal(resourceArbiter.status().pending.length, 0);
+  await cancellationBlocker;
+
+  // Interactive MCP contention must fail explicitly before the outer
+  // transport/gateway timeout.
+  process.env.MCP_RESOURCE_WAIT_TIMEOUT_MS = "250";
+  const timeoutBlocker = withExecutionContext(sessionA, async () =>
+    await executeRoutedAction("shell.exec", {
+      command: "sleep 0.9",
+      cwd: parentWorkspace,
+      workspace_mode: "write",
+      timeout_ms: 10000,
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const resourceTimeoutStarted = Date.now();
+  await assert.rejects(
+    () =>
+      withExecutionContext(sessionB, async () =>
+        await executeRoutedAction("shell.exec", {
+          command: "sleep 0.1",
+          cwd: repoA,
+          workspace_mode: "write",
+          timeout_ms: 10000,
+        }),
+      ),
+    /RESOURCE_WAIT_TIMEOUT/,
+  );
+  const resourceTimeoutWallMs = Date.now() - resourceTimeoutStarted;
+  assert.ok(
+    resourceTimeoutWallMs < 750,
+    `resource timeout exceeded bounded wait: ${resourceTimeoutWallMs}ms`,
+  );
+  assert.equal(resourceArbiter.status().pending.length, 0);
+  await timeoutBlocker;
+  delete process.env.MCP_RESOURCE_WAIT_TIMEOUT_MS;
 
   // Durable Task ownership is keyed by task id, not transport session id.
   const taskId = "task_concurrency_verifier";
@@ -296,6 +427,27 @@ try {
   assert.equal((await workspaceLeaseStatus(repoA)).busy, false);
   processId = "";
 
+  // Natural process exit must converge without an explicit kill or Runtime
+  // restart. This protects against ghost "running" records and pinned workspace
+  // leases after a background validator finishes while the client stream is
+  // interrupted.
+  const naturalExit = await withExecutionContext(sessionB, async () =>
+    await executeRoutedAction("shell.start", {
+      command: "sleep 0.2",
+      cwd: repoB,
+      workspace_mode: "write",
+    }),
+  );
+  const naturalProcessId = (naturalExit.result as { processId: string }).processId;
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const naturalOutput = await getProcessOutput(naturalProcessId);
+  assert.equal(naturalOutput.running, false);
+  assert.ok(
+    naturalOutput.status === "exited" || naturalOutput.status === "lost",
+    `natural process did not converge: ${naturalOutput.status}`,
+  );
+  assert.equal((await workspaceLeaseStatus(repoB)).busy, false);
+
   // Old unpinned session-only leases are reaped after Runtime identity changes.
   const orphan = await withExecutionContext(sessionB, async () =>
     await ensureWorkspaceWriteLease(repoB, {
@@ -410,10 +562,18 @@ try {
         siblingWallMs,
         hierarchicalActionLocks: true,
         hierarchicalWallMs,
+        readOnlyObservationNotBlockedByWorkspaceWriter: true,
+        observationWallMs,
+        exactPathReadWriteConflictPreserved: true,
+        resourceWaitCancellation: true,
+        cancellationWallMs,
+        boundedInteractiveResourceWait: true,
+        resourceTimeoutWallMs,
         taskOwnershipTransportIndependent: true,
         processScopedWorkspaceLease: true,
         disconnectedProcessClaim: true,
         processExitReleasesLease: true,
+        naturalProcessExitReconciles: true,
         orphanSessionLeaseReclamation: true,
         sameRuntimeDisconnectedSessionReclamation: true,
         staleActiveSessionReclamation: true,

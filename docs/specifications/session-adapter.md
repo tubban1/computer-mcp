@@ -1,6 +1,6 @@
 # AgentOS Runtime Session Adapter Contract
 
-Status: **v0.9.9 foundation**
+Status: **Contract v1 Stable for AgentOS Runtime 1.x**
 
 v0.9.9 makes browser-based AI sessions durable Runtime objects instead of relying on naked coordinates or whichever tab happens to be active.
 
@@ -149,3 +149,10 @@ This isolates changing product DOM details from the Session Adapter contract.
 ## Verification
 
 `npm run verify:session-adapters` starts two local agent pages, binds them as distinct ChatGPT and Antigravity sessions, and runs a real four-phase Persistent Loop from ChatGPT → Antigravity → ChatGPT. It verifies fingerprints, exact last-message capture, cross-session carry, duplicate receipts and interrupted-send freeze behavior.
+
+
+## 1.x compatibility
+
+Session Adapter Contract v1 is additive within Runtime 1.x. New adapters or optional fields may be added, but binding identity checks, explicit rebind, pending-send uncertainty, durable send receipts, and explicit pending-send resolution remain stable semantics.
+
+See [AgentOS Runtime 1.x Compatibility Policy](compatibility-policy.md).

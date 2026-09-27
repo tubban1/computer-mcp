@@ -1,0 +1,6 @@
+{
+  "helperVersion": "0.2.0",
+  "bundleId": "fan.fde.computermcp.helper",
+  "sourceFingerprint": "0c98d5a06ced9e62aff9fcb66985227e8ef5108789e8c784bcbe537654ffd48d",
+  "productionPolicy": "preserve-installed-helper-through-computer-mcp-1.x"
+}

@@ -8,7 +8,10 @@ This directory is organized by document purpose rather than release chronology.
 - [Layer model](architecture/layers.md)
 - [v1.0 roadmap](roadmap/v1.0.md)
 - [Production Runtime](operations/production-runtime.md)
+- [Production promotion policy](operations/production-promotion.md)
+- [Computer MCP 1.0 Performance P0](operations/performance-p0.md)
 - [Concurrency and ownership](architecture/concurrency-and-ownership.md)
+- [computer-mcp ↔ OWL Runtime coordination](architecture/cross-repo-coordination.md)
 
 ## Architecture
 
@@ -25,6 +28,7 @@ Contracts intended to remain stable across implementations.
 
 - [Primitive ABI](specifications/primitive-abi.md)
 - [Skill ABI](specifications/skill-abi.md)
+- [1.x compatibility policy](specifications/compatibility-policy.md)
 - [Embedding Provider Contract](specifications/embedding-provider.md)
 - [Session Adapter Contract](specifications/session-adapter.md)
 - [Workspace Lease Contract](specifications/workspace-lease.md)
@@ -78,8 +82,11 @@ ADRs explain why important design choices were made, not just what the current c
 - [ADR-0004: Immutable production Runtime](adr/0004-production-runtime.md)
 - [ADR-0005: Graceful drain and explicit handoff](adr/0005-graceful-drain-handoff.md)
 - [ADR-0006: Production upgrade protocol](adr/0006-production-upgrade-protocol.md)
+- [ADR-0011: Freeze v1 contracts](adr/0011-freeze-v1-contracts.md)
 - [ADR-0007: Versioned durable state](adr/0007-versioned-durable-state.md)
 - [ADR-0008: Durable side-effect replay](adr/0008-durable-side-effect-replay.md)
+- [ADR-0009: Personal MCP stability boundary](adr/0009-personal-mcp-stability.md)
+- [ADR-0010: Production promotion and Native Helper stability](adr/0010-production-promotion-helper-stability.md)
 
 ## Archive
 

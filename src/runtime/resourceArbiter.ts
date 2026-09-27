@@ -13,6 +13,8 @@ type PendingRequest = {
   resources: ResourceRequirement[];
   enqueuedAt: number;
   resolve: (lease: ResourceLease) => void;
+  reject: (error: Error) => void;
+  cleanup: () => void;
 };
 
 export type ResourceLease = {
@@ -21,6 +23,11 @@ export type ResourceLease = {
   resources: ResourceRequirement[];
   waitMs: number;
   release: () => void;
+};
+
+export type ResourceAcquireOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 function pathContains(parent: string, child: string): boolean {
@@ -52,6 +59,11 @@ function normalizeResources(resources: ResourceRequirement[]): ResourceRequireme
     }
   }
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function boundedTimeoutMs(value: number | undefined): number | null {
+  if (value === undefined || !Number.isFinite(value)) return null;
+  return Math.min(Math.max(Math.trunc(value), 0), 10 * 60_000);
 }
 
 class ResourceArbiter {
@@ -111,6 +123,14 @@ class ResourceArbiter {
     this.drain();
   }
 
+  private removePending(ticket: string): PendingRequest | null {
+    const index = this.pending.findIndex((request) => request.ticket === ticket);
+    if (index < 0) return null;
+    const [request] = this.pending.splice(index, 1);
+    request?.cleanup();
+    return request ?? null;
+  }
+
   private drain(): void {
     let index = 0;
     while (index < this.pending.length) {
@@ -121,6 +141,7 @@ class ResourceArbiter {
       }
 
       this.pending.splice(index, 1);
+      request.cleanup();
       this.markGranted(request.ticket, request.resources);
       let released = false;
       request.resolve({
@@ -137,7 +158,11 @@ class ResourceArbiter {
     }
   }
 
-  async acquire(action: string, resources: ResourceRequirement[]): Promise<ResourceLease> {
+  async acquire(
+    action: string,
+    resources: ResourceRequirement[],
+    options?: ResourceAcquireOptions,
+  ): Promise<ResourceLease> {
     const normalized = normalizeResources(resources);
     const ticket = randomUUID();
 
@@ -151,14 +176,75 @@ class ResourceArbiter {
       };
     }
 
-    return await new Promise<ResourceLease>((resolve) => {
-      this.pending.push({
+    if (options?.signal?.aborted) {
+      throw new Error(
+        `RESOURCE_WAIT_CANCELLED: ${action} was cancelled before resource acquisition.`,
+      );
+    }
+
+    const timeoutMs = boundedTimeoutMs(options?.timeoutMs);
+
+    return await new Promise<ResourceLease>((resolve, reject) => {
+      let timeout: NodeJS.Timeout | null = null;
+      let settled = false;
+
+      const onAbort = () => {
+        if (settled) return;
+        const pending = this.removePending(ticket);
+        if (!pending) return;
+        pending.reject(
+          new Error(
+            `RESOURCE_WAIT_CANCELLED: ${action} was cancelled while waiting for resources.`,
+          ),
+        );
+      };
+
+      const cleanup = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        options?.signal?.removeEventListener("abort", onAbort);
+      };
+
+      const pending: PendingRequest = {
         ticket,
         action,
         resources: normalized,
         enqueuedAt: Date.now(),
-        resolve,
-      });
+        resolve: (lease) => {
+          if (settled) {
+            lease.release();
+            return;
+          }
+          settled = true;
+          resolve(lease);
+        },
+        reject: (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        },
+        cleanup,
+      };
+
+      this.pending.push(pending);
+      options?.signal?.addEventListener("abort", onAbort, { once: true });
+
+      if (timeoutMs !== null) {
+        timeout = setTimeout(() => {
+          if (settled) return;
+          const removed = this.removePending(ticket);
+          if (!removed) return;
+          removed.reject(
+            new Error(
+              `RESOURCE_WAIT_TIMEOUT: ${action} waited ${timeoutMs} ms for resources. Retry after the conflicting work finishes.`,
+            ),
+          );
+        }, timeoutMs);
+        timeout.unref();
+      }
+
       this.drain();
     });
   }
@@ -167,8 +253,9 @@ class ResourceArbiter {
     action: string,
     resources: ResourceRequirement[],
     operation: () => Promise<T>,
+    options?: ResourceAcquireOptions,
   ): Promise<{ result: T; lease: Omit<ResourceLease, "release"> }> {
-    const lease = await this.acquire(action, resources);
+    const lease = await this.acquire(action, resources, options);
     try {
       const result = await operation();
       return {

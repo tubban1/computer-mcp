@@ -69,6 +69,20 @@ type ActionDefinition = {
 
 const noArgs = z.object({}).passthrough();
 
+function resourceWaitTimeoutMs(origin: string): number {
+  const envKey =
+    origin === "mcp"
+      ? "MCP_RESOURCE_WAIT_TIMEOUT_MS"
+      : "BACKGROUND_RESOURCE_WAIT_TIMEOUT_MS";
+  const fallback = origin === "mcp" ? 3_000 : 60_000;
+  const configured = Number(process.env[envKey]);
+  if (!Number.isFinite(configured)) return fallback;
+  return Math.min(
+    Math.max(Math.trunc(configured), origin === "mcp" ? 250 : 1_000),
+    10 * 60_000,
+  );
+}
+
 const actions = {
   "provider.status": {
     provider: "registry",
@@ -850,6 +864,10 @@ export async function executeRoutedAction(
     action,
     resources,
     async () => await definition.run(parsed),
+    {
+      signal: executionContext.signal,
+      timeoutMs: resourceWaitTimeoutMs(executionContext.origin),
+    },
   );
 
   return {
