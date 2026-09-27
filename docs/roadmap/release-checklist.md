@@ -31,6 +31,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] Recovery matrix verifier
 - [ ] Soak smoke profile
 - [ ] Production Runtime verifier
+- [ ] Fresh immutable release verifier (`npm ci --omit=dev`, no source checkout dependency)
 - [ ] Production boundary verifier
 - [ ] Performance P0 verifier
 - [ ] Read-only observation remains responsive under unrelated workspace write load

@@ -29,6 +29,7 @@
     "verify:owl-runtime-consumer": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-owl-runtime-consumer.ts",
     "verify:production-runtime": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-production-runtime.ts",
     "verify:production-boundary": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-production-boundary.ts",
+    "verify:fresh-release": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-fresh-release.ts",
     "verify:performance-p0": "npm run build && AGENTOS_RUNTIME_MODE=test tsx scripts/verify-performance-p0.ts",
     "benchmark:production": "tsx scripts/benchmark-production-mcp.ts",
     "verify:drain-handoff": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-drain-handoff.ts",

@@ -94,6 +94,7 @@ If no stable Apple code-signing identity is configured, do **not** replace the p
 For 1.0.0:
 
 - full regression;
+- `npm run verify:fresh-release` proves the immutable release works with production dependencies only, without the source checkout or bundled Native Helper;
 - multi-session tests;
 - session identity/process ownership/cancellation/orphan tests;
 - production verifier;
