@@ -7,6 +7,7 @@ import {
   assertAllowedTargetPath,
 } from "../security/pathGuard.js";
 import { requireCapability } from "../security/capabilities.js";
+import { assertMacOSFilesystemResponsive } from "../security/macosFilesystemAccess.js";
 
 const DEFAULT_MAX_RESULTS = 200;
 
@@ -84,6 +85,7 @@ export async function searchFiles(
 
   async function walk(dir: string) {
     if (results.length >= maxResults) return;
+    await assertMacOSFilesystemResponsive(dir);
     const entries = await fs.readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
@@ -249,6 +251,7 @@ export async function listDirectoryTree(
   };
 
   async function walk(dir: string, currentDepth: number): Promise<TreeNode[]> {
+    await assertMacOSFilesystemResponsive(dir);
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const visible = entries.slice(0, perDirectory);
     const nodes: TreeNode[] = [];

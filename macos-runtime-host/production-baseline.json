@@ -1,0 +1,6 @@
+{
+  "runtimeHostVersion": "1.0.0",
+  "bundleId": "fan.fde.computermcp.runtime",
+  "sourceFingerprint": "28e8f763bd07be5ee2fb92e636d35b5f0346705712d30db356f615b436186a00",
+  "productionPolicy": "preserve-installed-runtime-host-through-computer-mcp-1.x"
+}

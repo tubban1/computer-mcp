@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -63,7 +63,10 @@
     "permissions:status": "zsh scripts/configure-production-access.sh status",
     "permissions:standard": "zsh scripts/configure-production-access.sh standard",
     "permissions:full-home": "zsh scripts/configure-production-access.sh full-home",
-    "verify:permissions-profile": "zsh scripts/verify-permissions-profile.sh"
+    "verify:permissions-profile": "zsh scripts/verify-permissions-profile.sh",
+    "install:runtime-host": "zsh scripts/install-macos-runtime-host.sh",
+    "verify:runtime-host": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-runtime-host.ts",
+    "verify:macos-filesystem-access": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-filesystem-access.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

@@ -15,9 +15,11 @@ CURRENT_LINK="$AGENTOS_HOME/current"
 ENV_FILE="${AGENTOS_RUNTIME_ENV:-$AGENTOS_HOME/runtime.env}"
 STATE_ROOT="${AGENTOS_PRODUCTION_STATE_ROOT:-$HOME/.computer-mcp}"
 LOG_DIR="$AGENTOS_HOME/logs"
+PLIST="$HOME/Library/LaunchAgents/com.agentos.runtime.plist"
 LABEL="com.agentos.runtime"
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
+RUNTIME_HOST_BIN="$HOME/Applications/Computer MCP Runtime.app/Contents/MacOS/ComputerMCPRuntime"
 CONTROL_CLIENT="$REPO_ROOT/scripts/runtime-control-client.mjs"
 STATE_CLIENT="$REPO_ROOT/scripts/runtime-state-client.mjs"
 PREVIOUS_RELEASE="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
@@ -36,6 +38,13 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Production environment does not exist: $ENV_FILE"
+  exit 2
+fi
+
+if [[ ! -x "$RUNTIME_HOST_BIN" ]]; then
+  echo "Stable Computer MCP Runtime Host is not installed:"
+  echo "  $RUNTIME_HOST_BIN"
+  echo "Run: npm run install:runtime-host"
   exit 2
 fi
 
@@ -112,7 +121,7 @@ fi
 export AGENTOS_RUNTIME_MODE=production
 export AGENTOS_STATE_ROOT="${AGENTOS_PRODUCTION_STATE_ROOT:-$STATE_ROOT}"
 RELEASE_ROOT="\$(cd "\$(dirname "\$0")" && pwd)"
-exec "$NODE_BIN" "\$RELEASE_ROOT/dist/server.js"
+exec "$RUNTIME_HOST_BIN" "$NODE_BIN" "\$RELEASE_ROOT/dist/server.js"
 EOF
 chmod 700 "$TMP_RELEASE/run.sh"
 

@@ -20,6 +20,7 @@ PREVIOUS_RELEASE="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 LABEL="com.agentos.runtime"
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
+RUNTIME_HOST_BIN="$HOME/Applications/Computer MCP Runtime.app/Contents/MacOS/ComputerMCPRuntime"
 
 bootstrap_runtime_service() {
   launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
@@ -49,6 +50,12 @@ fi
 
 mkdir -p "$AGENTOS_HOME/releases" "$LOG_DIR" "$(dirname "$PLIST")"
 
+if [[ ! -x "$RUNTIME_HOST_BIN" ]]; then
+  echo "Installing stable Computer MCP Runtime Host..."
+  "$REPO_ROOT/scripts/install-macos-runtime-host.sh"
+fi
+[[ -x "$RUNTIME_HOST_BIN" ]] || { echo "Computer MCP Runtime Host is unavailable: $RUNTIME_HOST_BIN"; exit 1; }
+
 echo "Building AgentOS Runtime $VERSION..."
 "$NPM_BIN" run build
 
@@ -77,7 +84,7 @@ fi
 export AGENTOS_RUNTIME_MODE=production
 export AGENTOS_STATE_ROOT="${AGENTOS_PRODUCTION_STATE_ROOT:-$STATE_ROOT}"
 RELEASE_ROOT="\$(cd "\$(dirname "\$0")" && pwd)"
-exec "$NODE_BIN" "\$RELEASE_ROOT/dist/server.js"
+exec "$RUNTIME_HOST_BIN" "$NODE_BIN" "\$RELEASE_ROOT/dist/server.js"
 EOF
 chmod 700 "$TMP_RELEASE/run.sh"
 
@@ -123,7 +130,11 @@ cat > "$PLIST" <<EOF
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$CURRENT_LINK/run.sh</string>
+    <string>$RUNTIME_HOST_BIN</string>
+    <string>--env-file</string>
+    <string>$ENV_FILE</string>
+    <string>$NODE_BIN</string>
+    <string>$CURRENT_LINK/dist/server.js</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$CURRENT_LINK</string>

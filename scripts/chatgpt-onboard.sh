@@ -10,6 +10,7 @@ RUNTIME_FILE="$TUNNEL_HOME/tunnel/runtime-path"
 AGENTOS_HOME="${AGENTOS_HOME:-$HOME/.agentos}"
 ENV_FILE="${AGENTOS_RUNTIME_ENV:-$AGENTOS_HOME/runtime.env}"
 CURRENT_LINK="$AGENTOS_HOME/current"
+RUNTIME_HOST="$HOME/Applications/Computer MCP Runtime.app/Contents/MacOS/ComputerMCPRuntime"
 ONBOARD_DIR="$TUNNEL_HOME/onboarding"
 ONBOARD_RECORD="$ONBOARD_DIR/chatgpt.json"
 OPEN_CHATGPT=true

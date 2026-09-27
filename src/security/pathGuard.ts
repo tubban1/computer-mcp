@@ -2,6 +2,10 @@ import { runtimeStatePath } from "../runtime/runtimePaths.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
+import {
+  assertMacOSFilesystemResponsive,
+  probeMacOSFilesystemAccess,
+} from "./macosFilesystemAccess.js";
 
 export function configuredRoots(): string[] {
   return (process.env.ALLOWED_DIRECTORIES ?? "")
@@ -34,7 +38,7 @@ function isWithin(root: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-async function realConfiguredRoots(): Promise<string[]> {
+async function realConfiguredRootsFor(requested: string): Promise<string[]> {
   const roots = effectiveRoots();
   if (roots.length === 0) {
     throw new Error(
@@ -42,24 +46,39 @@ async function realConfiguredRoots(): Promise<string[]> {
     );
   }
 
-  const resolved: string[] = [];
-  for (const root of roots) {
-    try {
-      resolved.push(await fs.realpath(root));
-    } catch {
-      // Ignore missing configured roots; another configured root may still be valid.
-    }
-  }
+  const matching = roots.filter((root) => isWithin(root, requested));
+  if (matching.length === 0) return [];
 
-  if (resolved.length === 0) {
-    throw new Error("None of the configured ALLOWED_DIRECTORIES exist.");
+  const resolved: string[] = [];
+  for (const root of matching) {
+    try {
+      await assertMacOSFilesystemResponsive(root);
+      resolved.push(await fs.realpath(root));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("MACOS_FILE_PERMISSION_REQUIRED")
+      ) {
+        throw error;
+      }
+      // Ignore a missing matching root; another matching root may still exist.
+    }
   }
   return resolved;
 }
 
 export async function assertAllowedExistingPath(inputPath: string): Promise<string> {
-  const roots = await realConfiguredRoots();
   const requested = path.resolve(inputPath);
+  const lexicalRoots = effectiveRoots().filter((root) => isWithin(root, requested));
+  if (lexicalRoots.length === 0) {
+    throw new Error("Access denied: path is outside ALLOWED_DIRECTORIES.");
+  }
+
+  await assertMacOSFilesystemResponsive(requested);
+  const roots = await realConfiguredRootsFor(requested);
+  if (roots.length === 0) {
+    throw new Error("None of the matching ALLOWED_DIRECTORIES exist.");
+  }
 
   let realRequested: string;
   try {
@@ -76,8 +95,17 @@ export async function assertAllowedExistingPath(inputPath: string): Promise<stri
 }
 
 export async function assertAllowedTargetPath(inputPath: string): Promise<string> {
-  const roots = await realConfiguredRoots();
   const requested = path.resolve(inputPath);
+  const lexicalRoots = effectiveRoots().filter((root) => isWithin(root, requested));
+  if (lexicalRoots.length === 0) {
+    throw new Error("Access denied: path is outside ALLOWED_DIRECTORIES.");
+  }
+
+  await probeMacOSFilesystemAccess(path.dirname(requested));
+  const roots = await realConfiguredRootsFor(requested);
+  if (roots.length === 0) {
+    throw new Error("None of the matching ALLOWED_DIRECTORIES exist.");
+  }
 
   let exists = false;
   try {
@@ -96,6 +124,13 @@ export async function assertAllowedTargetPath(inputPath: string): Promise<string
   let ancestor = path.dirname(requested);
   while (true) {
     try {
+      const probe = await probeMacOSFilesystemAccess(ancestor);
+      if (probe === "missing") {
+        const parent = path.dirname(ancestor);
+        if (parent === ancestor) break;
+        ancestor = parent;
+        continue;
+      }
       const realAncestor = await fs.realpath(ancestor);
       if (!roots.some((root) => isWithin(root, realAncestor))) {
         throw new Error("Access denied: target parent is outside ALLOWED_DIRECTORIES.");
