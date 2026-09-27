@@ -75,6 +75,27 @@ try {
   assert.equal(tick.due, 1);
 
   const schedule = await getPersistentSchedule(scheduleId);
+  if (schedule.enabled) {
+    const diagnosticTaskId =
+      typeof schedule.lastTaskId === "string" ? schedule.lastTaskId : "";
+    const diagnosticTask = diagnosticTaskId
+      ? await getPersistentTaskStatus(diagnosticTaskId, true).catch((error) => ({
+          diagnosticError:
+            error instanceof Error ? error.message : String(error),
+        }))
+      : null;
+    console.error(
+      JSON.stringify(
+        {
+          verifier: "verify-scheduler",
+          schedule,
+          task: diagnosticTask,
+        },
+        null,
+        2,
+      ),
+    );
+  }
   assert.equal(schedule.enabled, false);
   assert.equal(schedule.runCount, 1);
   assert.equal(schedule.lastTaskStatus, "completed");

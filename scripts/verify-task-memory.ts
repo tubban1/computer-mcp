@@ -66,6 +66,21 @@ try {
     maxConcurrency: 2,
     failFast: true,
   });
+  if (ran.status !== "completed") {
+    const failedStatus = await getPersistentTaskStatus(taskId, true);
+    console.error(
+      JSON.stringify(
+        {
+          verifier: "verify-task-memory",
+          expectedStatus: "completed",
+          actualStatus: ran.status,
+          steps: failedStatus.steps,
+        },
+        null,
+        2,
+      ),
+    );
+  }
   assert.equal(ran.status, "completed");
 
   const status = await getPersistentTaskStatus(taskId, true);

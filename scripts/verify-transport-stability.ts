@@ -152,7 +152,14 @@ const transports: StreamableHTTPClientTransport[] = [];
 
 try {
   const healthUrl = new URL("/health", serverUrl);
-  const healthDeadline = Date.now() + 10_000;
+  const verifierStartupTimeoutMs = Math.min(
+    Math.max(
+      Number(process.env.TRANSPORT_VERIFIER_STARTUP_TIMEOUT_MS ?? 30_000),
+      5_000,
+    ),
+    60_000,
+  );
+  const healthDeadline = Date.now() + verifierStartupTimeoutMs;
   let healthy = false;
   while (Date.now() < healthDeadline) {
     if (server.exitCode !== null) {

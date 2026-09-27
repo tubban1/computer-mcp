@@ -658,12 +658,18 @@ try {
 
   if (activeAdapter) {
     const adapter = activeAdapter;
-    await Promise.race([
-      adapter.promise,
-      delay(60_000).then(() => {
+    let adapterDeadline: NodeJS.Timeout | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      adapterDeadline = setTimeout(() => {
         if (!adapter.child.killed) adapter.child.kill("SIGTERM");
-      }),
-    ]).catch(() => undefined);
+        resolve();
+      }, 60_000);
+    });
+    try {
+      await Promise.race([adapter.promise, deadline]).catch(() => undefined);
+    } finally {
+      if (adapterDeadline) clearTimeout(adapterDeadline);
+    }
   }
 
   const settleDeadline = Date.now() + 10_000;

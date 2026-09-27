@@ -79,6 +79,19 @@ try {
 
   await runLoopControllerTick(Date.now() + 2500);
   status = await getPersistentLoop(loopId);
+  if (status.phase !== "capture") {
+    console.error(
+      JSON.stringify(
+        {
+          verifier: "verify-loop",
+          checkpoint: "after-relay",
+          status,
+        },
+        null,
+        2,
+      ),
+    );
+  }
   assert.equal(status.phase, "capture");
   assert.equal(status.cycleCount, 1);
   assert.equal(await fs.readFile(relayPath, "utf8"), "chatgpt-response\n");

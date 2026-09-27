@@ -175,6 +175,8 @@ COMPUTER_MCP_BENCH_FILE=/path/to/file npm run benchmark:production
 
 This operational benchmark helps distinguish a healthy local production MCP from remote gateway latency or workspace contention.
 
+For long verification suites invoked through Computer MCP itself, prefer a managed process with `workspace_mode=read`, then poll `get_process_output` with short calls. Do not start a read-only verifier as a write-mode managed process on the worktree being tested: the outer durable workspace lease can otherwise block the verifier's own Task/Scheduler/Loop actions and create false failures. Durable execution is intended to survive a ChatGPT/transport interruption; short polling keeps the interactive control plane responsive.
+
 The verifier:
 
 1. starts the compiled server on loopback;
