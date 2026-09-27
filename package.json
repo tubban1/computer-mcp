@@ -25,6 +25,7 @@
     "verify:macos-helper": "xcrun swiftc -frontend -parse macos-helper/ComputerMCPHelper.swift",
     "verify:concurrency": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-concurrency.ts",
     "verify:stability-core": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-stability-core.ts",
+    "verify:process-capability": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-process-capability.ts",
     "verify:transport-stability": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-transport-stability.ts",
     "verify:owl-runtime-client": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-owl-runtime-client.ts",
     "verify:owl-runtime-consumer": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-owl-runtime-consumer.ts",

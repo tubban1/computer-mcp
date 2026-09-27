@@ -32,6 +32,7 @@ process.env.PROCESS_LOG_DIR = path.join(
 );
 process.env.TRANSACTION_DIR = path.join(scratch, "state", "transactions");
 process.env.ALLOWED_DIRECTORIES = root;
+process.env.MACOS_FILESYSTEM_PREFLIGHT = "false";
 process.env.ALLOW_WRITE = "true";
 process.env.ALLOW_DELETE = "true";
 process.env.ALLOW_SHELL = "true";

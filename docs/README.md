@@ -12,6 +12,7 @@ This directory is organized by document purpose rather than release chronology.
 - [Architecture overview](architecture/overview.md)
 - [Layer model](architecture/layers.md)
 - [v1.0 roadmap](roadmap/v1.0.md)
+- [v1.1 development roadmap](roadmap/v1.1.md)
 - [New Mac installation](operations/new-machine-install.md)
 - [Production Runtime](operations/production-runtime.md)
 - [ChatGPT onboarding](operations/chatgpt-onboarding.md)

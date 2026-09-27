@@ -42,6 +42,8 @@ const sensitiveKeys = new Set([
   "manual_result",
   "steps",
   "args",
+  "control_token",
+  "controlToken",
 ]);
 
 export function sanitizeAuditArgs(value: unknown, key?: string): unknown {

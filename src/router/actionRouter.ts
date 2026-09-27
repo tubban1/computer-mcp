@@ -257,16 +257,34 @@ const actions = {
   },
   "shell.processes": {
     provider: "shell",
-    description: "List managed processes.",
-    schema: noArgs,
-    run: () => listProcesses(),
+    description: "List managed processes with optional status/owner/time filtering.",
+    schema: z.object({
+      running_only: z.boolean().optional(),
+      status: z.enum(["running", "exited", "lost", "terminating"]).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+      since: z.string().optional(),
+      owner_scope: z.enum(["all", "current"]).optional(),
+    }),
+    run: ({ running_only, status, limit, since, owner_scope }: any) =>
+      listProcesses({
+        runningOnly: running_only,
+        status,
+        limit,
+        since,
+        ownerScope: owner_scope,
+      }),
   },
   "shell.input": {
     provider: "shell",
     description: "Send stdin to a managed process.",
-    schema: z.object({ process_id: z.string(), input: z.string() }),
+    schema: z.object({
+      process_id: z.string(),
+      input: z.string(),
+      control_token: z.string().optional(),
+    }),
     destructive: true,
-    run: ({ process_id, input }: any) => sendProcessInput(process_id, input),
+    run: ({ process_id, input, control_token }: any) =>
+      sendProcessInput(process_id, input, control_token),
   },
   "shell.output": {
     provider: "shell",
@@ -284,9 +302,11 @@ const actions = {
     schema: z.object({
       process_id: z.string(),
       signal: z.enum(["SIGTERM", "SIGKILL", "SIGINT"]).optional(),
+      control_token: z.string().optional(),
     }),
     destructive: true,
-    run: ({ process_id, signal }: any) => killProcess(process_id, signal ?? "SIGTERM"),
+    run: ({ process_id, signal, control_token }: any) =>
+      killProcess(process_id, signal ?? "SIGTERM", control_token),
   },
 
   "git.status": {

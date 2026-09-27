@@ -543,7 +543,7 @@ function createServer() {
 
   server.tool(
     "start_process",
-    "Start a long-running shell process in an allowed working directory and return a process ID. Requires ALLOW_SHELL=true.",
+    "Start a long-running shell process and return a process ID plus a reconnect-safe control token. Treat the control token as a secret. Requires ALLOW_SHELL=true.",
     {
       command: z.string().min(1),
       cwd: z.string(),
@@ -575,8 +575,14 @@ function createServer() {
 
   server.tool(
     "list_processes",
-    "List processes started by this computer-mcp instance.",
-    {},
+    "List managed processes with optional running/status/time/owner filters. Defaults to the 50 most recent records.",
+    {
+      running_only: z.boolean().optional(),
+      status: z.enum(["running", "exited", "lost", "terminating"]).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+      since: z.string().optional(),
+      owner_scope: z.enum(["all", "current"]).optional(),
+    },
     {
       title: "List Managed Processes",
       readOnlyHint: true,
@@ -584,9 +590,15 @@ function createServer() {
       idempotentHint: true,
       openWorldHint: false,
     },
-    async () => {
+    async ({ running_only, status, limit, since, owner_scope }) => {
       try {
-        return ok((await executeRoutedAction("shell.processes", {})).result);
+        return ok((await executeRoutedAction("shell.processes", {
+          running_only,
+          status,
+          limit: limit ?? 50,
+          since,
+          owner_scope: owner_scope ?? "all",
+        })).result);
       } catch (error) {
         return fail(error);
       }
@@ -595,10 +607,11 @@ function createServer() {
 
   server.tool(
     "send_process_input",
-    "Send text to stdin of a process started by this computer-mcp instance. Requires ALLOW_SHELL=true.",
+    "Send text to stdin of a managed process. A reconnect-safe control_token may authorize the process across MCP transport rotation. Requires ALLOW_SHELL=true.",
     {
       process_id: z.string(),
       input: z.string(),
+      control_token: z.string().optional(),
     },
     {
       title: "Send Process Input",
@@ -607,9 +620,9 @@ function createServer() {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ process_id, input }) => {
+    async ({ process_id, input, control_token }) => {
       try {
-        return ok((await executeRoutedAction("shell.input", { process_id, input })).result);
+        return ok((await executeRoutedAction("shell.input", { process_id, input, control_token })).result);
       } catch (error) {
         return fail(error);
       }
@@ -641,10 +654,11 @@ function createServer() {
 
   server.tool(
     "kill_process",
-    "Stop a process started by this computer-mcp instance. Requires ALLOW_SHELL=true.",
+    "Stop a managed process. A reconnect-safe control_token may authorize the process across MCP transport rotation. Requires ALLOW_SHELL=true.",
     {
       process_id: z.string(),
       signal: z.enum(["SIGTERM", "SIGKILL", "SIGINT"]).optional(),
+      control_token: z.string().optional(),
     },
     {
       title: "Kill Process",
@@ -653,9 +667,9 @@ function createServer() {
       idempotentHint: false,
       openWorldHint: false,
     },
-    async ({ process_id, signal }) => {
+    async ({ process_id, signal, control_token }) => {
       try {
-        return ok((await executeRoutedAction("shell.kill", { process_id, signal: signal ?? "SIGTERM" })).result);
+        return ok((await executeRoutedAction("shell.kill", { process_id, signal: signal ?? "SIGTERM", control_token })).result);
       } catch (error) {
         return fail(error);
       }

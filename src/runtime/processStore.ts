@@ -7,6 +7,7 @@ import {
   createHash,
   randomBytes,
   randomUUID,
+  timingSafeEqual,
 } from "node:crypto";
 import { runtimeStatePath } from "./runtimePaths.js";
 
@@ -28,6 +29,7 @@ export type ManagedProcessRecord = {
   ownerSessionId: string;
   ownerIdentity?: string;
   ownerTaskId?: string;
+  controlTokenHash?: string;
   startedAt: string;
   updatedAt: string;
   status: ManagedProcessStatus;
@@ -181,6 +183,25 @@ export function newManagedProcessId(): string {
   return `process_${Date.now().toString(36)}_${randomUUID()
     .replaceAll("-", "")
     .slice(0, 12)}`;
+}
+
+export function newManagedProcessControlToken(): string {
+  return `pcap_${randomBytes(32).toString("base64url")}`;
+}
+
+export function hashManagedProcessControlToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function verifyManagedProcessControlToken(
+  record: ManagedProcessRecord,
+  token?: string,
+): boolean {
+  if (!record.controlTokenHash || !token?.trim()) return false;
+  const actual = Buffer.from(hashManagedProcessControlToken(token), "hex");
+  const expected = Buffer.from(record.controlTokenHash, "hex");
+  if (actual.length !== expected.length) return false;
+  return timingSafeEqual(actual, expected);
 }
 
 export async function writeManagedProcess(

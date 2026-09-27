@@ -12,11 +12,14 @@ import {
 import {
   getProcessStorageInfo,
   listManagedProcesses,
+  newManagedProcessControlToken,
   newManagedProcessId,
+  hashManagedProcessControlToken,
   processLogPaths,
   readManagedProcess,
   writeManagedProcess,
   type ManagedProcessRecord,
+  verifyManagedProcessControlToken,
 } from "../runtime/processStore.js";
 import { resolveWorkspace } from "../runtime/workspaceResolver.js";
 import {
@@ -63,9 +66,11 @@ function processOwnerIdentity(record: ManagedProcessRecord): string {
 function processOwnerMatches(
   record: ManagedProcessRecord,
   context: ExecutionContext = currentExecutionContext(),
+  controlToken?: string,
 ): boolean {
   if (record.ownerTaskId && context.taskId === record.ownerTaskId) return true;
   if (processOwnerIdentity(record) === executionOwnerIdentity(context)) return true;
+  if (verifyManagedProcessControlToken(record, controlToken)) return true;
   return context.origin === "system" && context.sessionId === "runtime:system";
 }
 
@@ -102,9 +107,9 @@ function signalProcessTree(
   }
 }
 
-function assertProcessOwner(record: ManagedProcessRecord) {
+function assertProcessOwner(record: ManagedProcessRecord, controlToken?: string) {
   const context = currentExecutionContext();
-  if (processOwnerMatches(record, context)) return;
+  if (processOwnerMatches(record, context, controlToken)) return;
   throw new Error(
     `PROCESS_OWNED: ${record.processId} belongs to ${record.ownerTaskId ? `task:${record.ownerTaskId}` : `session:${record.ownerSessionId}`} and cannot be controlled by session:${context.sessionId}.`,
   );
@@ -297,6 +302,7 @@ export async function startProcess(
   const safeCwd = await assertAllowedExistingPath(cwd);
   const workspace = await resolveWorkspace(safeCwd);
   const processId = newManagedProcessId();
+  const controlToken = newManagedProcessControlToken();
   const context = currentExecutionContext();
 
   const leaseContext =
@@ -354,6 +360,7 @@ export async function startProcess(
     ownerSessionId: context.sessionId,
     ownerIdentity: executionOwnerIdentity(context),
     ...(context.taskId ? { ownerTaskId: context.taskId } : {}),
+    controlTokenHash: hashManagedProcessControlToken(controlToken),
     startedAt: now,
     updatedAt: now,
     status: "running",
@@ -405,16 +412,49 @@ export async function startProcess(
     ownerSessionId: record.ownerSessionId,
     ownerIdentity: record.ownerIdentity ?? record.ownerSessionId,
     ownerTaskId: record.ownerTaskId ?? null,
+    controlToken,
     stdoutPath: record.stdoutPath,
     stderrPath: record.stderrPath,
     durable: true,
   };
 }
 
-export async function listProcesses() {
+export async function listProcesses(filters?: {
+  runningOnly?: boolean;
+  status?: "running" | "exited" | "lost" | "terminating";
+  limit?: number;
+  since?: string;
+  ownerScope?: "all" | "current";
+}) {
   const records = await listManagedProcesses();
-  const reconciled = await Promise.all(records.map(reconcileRecord));
-  return reconciled.map((record) => ({
+  let reconciled = await Promise.all(records.map(reconcileRecord));
+
+  if (filters?.runningOnly) {
+    reconciled = reconciled.filter(
+      (record) => record.status === "running" || record.status === "terminating",
+    );
+  }
+  if (filters?.status) {
+    reconciled = reconciled.filter((record) => record.status === filters.status);
+  }
+  if (filters?.since) {
+    const sinceMs = Date.parse(filters.since);
+    if (!Number.isFinite(sinceMs)) throw new Error("Invalid process since timestamp.");
+    reconciled = reconciled.filter(
+      (record) => Date.parse(record.startedAt) >= sinceMs,
+    );
+  }
+  if (filters?.ownerScope === "current") {
+    const context = currentExecutionContext();
+    reconciled = reconciled.filter(
+      (record) =>
+        (record.ownerTaskId && record.ownerTaskId === context.taskId) ||
+        processOwnerIdentity(record) === executionOwnerIdentity(context),
+    );
+  }
+
+  const limit = Math.min(Math.max(Math.trunc(filters?.limit ?? 50), 1), 500);
+  return reconciled.slice(0, limit).map((record) => ({
     processId: record.processId,
     pid: record.pid,
     command: record.command,
@@ -437,10 +477,14 @@ export async function listProcesses() {
   }));
 }
 
-export async function sendProcessInput(processId: string, input: string) {
+export async function sendProcessInput(
+  processId: string,
+  input: string,
+  controlToken?: string,
+) {
   requireCapability("ALLOW_SHELL", false);
   const record = await reconcileRecord(await readManagedProcess(processId));
-  assertProcessOwner(record);
+  assertProcessOwner(record, controlToken);
 
   if (record.status !== "running") {
     throw new Error("Process is not running.");
@@ -486,9 +530,11 @@ export async function claimRecoveredProcess(processId: string) {
 
   const context = currentExecutionContext();
   const previousOwnerSessionId = record.ownerSessionId;
+  const controlToken = newManagedProcessControlToken();
   record.ownerSessionId = context.sessionId;
   record.ownerIdentity = executionOwnerIdentity(context);
   record.ownerTaskId = context.taskId;
+  record.controlTokenHash = hashManagedProcessControlToken(controlToken);
   record.orphanedAt = undefined;
   await claimWorkspaceLeaseForRecoveredProcess(processId, context);
   await writeManagedProcess(record);
@@ -500,6 +546,7 @@ export async function claimRecoveredProcess(processId: string) {
     ownerSessionId: record.ownerSessionId,
     ownerIdentity: record.ownerIdentity ?? record.ownerSessionId,
     ownerTaskId: record.ownerTaskId ?? null,
+    controlToken,
     workspace: record.workspace,
     workspaceLeaseId: record.workspaceLeaseId ?? null,
   };
@@ -530,10 +577,11 @@ export async function getProcessOutput(
 export async function killProcess(
   processId: string,
   signal: NodeJS.Signals = "SIGTERM",
+  controlToken?: string,
 ) {
   requireCapability("ALLOW_SHELL", false);
   const record = await reconcileRecord(await readManagedProcess(processId));
-  assertProcessOwner(record);
+  assertProcessOwner(record, controlToken);
 
   if (record.status !== "running" && record.status !== "terminating") {
     return {
