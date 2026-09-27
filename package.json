@@ -59,7 +59,11 @@
     "tunnel:service:status": "zsh scripts/tunnel-service.sh status",
     "tunnel:service:stop": "zsh scripts/tunnel-service.sh stop",
     "tunnel:service:restart": "zsh scripts/tunnel-service.sh restart",
-    "verify:onboarding": "zsh scripts/verify-chatgpt-onboarding.sh"
+    "verify:onboarding": "zsh scripts/verify-chatgpt-onboarding.sh",
+    "permissions:status": "zsh scripts/configure-production-access.sh status",
+    "permissions:standard": "zsh scripts/configure-production-access.sh standard",
+    "permissions:full-home": "zsh scripts/configure-production-access.sh full-home",
+    "verify:permissions-profile": "zsh scripts/verify-permissions-profile.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

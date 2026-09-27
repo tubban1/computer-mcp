@@ -71,14 +71,24 @@ if [[ ! -f "$ENV_FILE" ]]; then
     chmod 600 "$ENV_FILE"
     echo "Created $ENV_FILE from the current project .env."
   else
-    cat > "$ENV_FILE" <<'EOF'
+    cat > "$ENV_FILE" <<EOF
 # AgentOS Runtime production environment.
-# Add ALLOWED_DIRECTORIES and capability flags here.
+# Standard first-run profile: common user folders, mutating local work enabled,
+# destructive/network writes remain opt-in until the user chooses a broader profile.
 PORT=8787
 AGENTOS_WAKE_NAME=Jarvis
+ALLOWED_DIRECTORIES=$HOME/Desktop,$HOME/Documents,$HOME/Downloads,$HOME/Pictures,$HOME/Movies,$HOME/Music,$HOME/Public
+ALLOW_WRITE=true
+ALLOW_DELETE=false
+ALLOW_SHELL=true
+ALLOW_GIT_PUSH=false
+ALLOW_ROLLBACK=true
+ALLOW_BROWSER=true
+ALLOW_GUI=true
+MACOS_HELPER_MODE=required
 EOF
     chmod 600 "$ENV_FILE"
-    echo "Created minimal $ENV_FILE. Configure permissions before relying on production actions."
+    echo "Created $ENV_FILE with the standard first-run access profile."
   fi
 fi
 

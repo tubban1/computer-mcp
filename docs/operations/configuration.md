@@ -27,6 +27,16 @@ test        -> ~/.computer-mcp-test
 
 Common gates include filesystem scope, shell, browser, GUI, Git push, rollback, and delete permissions. Keep `ALLOWED_DIRECTORIES` as narrow as practical.
 
+For production, prefer the versioned access-profile commands over repeatedly editing the environment by hand:
+
+```text
+npm run permissions:status
+npm run permissions:standard
+npm run permissions:full-home
+```
+
+Fresh installs without a project `.env` receive the `standard` filesystem roots and a usable local-worker baseline. Delete and Git push remain disabled in that fresh-install baseline. The explicit `full-home` profile enables the complete personal-worker capability set and grants the current home directory as the filesystem root.
+
 ## Identity
 
 ```text
