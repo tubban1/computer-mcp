@@ -15,8 +15,8 @@ VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST
 BUILD_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST")
 SOURCE_FINGERPRINT=$(
   {
-    shasum -a 256 "$SRC"
-    shasum -a 256 "$PLIST"
+    shasum -a 256 "$SRC" | awk '{print $1}'
+    shasum -a 256 "$PLIST" | awk '{print $1}'
   } | shasum -a 256 | awk '{print $1}'
 )
 INSTALLED_FINGERPRINT_FILE="$INSTALL_APP/Contents/Resources/source.sha256"
@@ -53,6 +53,20 @@ if [[ -d "$INSTALL_APP" ]]; then
     echo "Computer MCP Helper is unchanged; preserving the installed app and macOS permission identity."
     echo "  app:     $INSTALL_APP"
     echo "  version: ${EXISTING_VERSION:-unknown}"
+    [[ -S "$SOCKET" ]] || launch_helper
+    exit 0
+  fi
+
+  # 0.9.x Helpers predate source.sha256. If the installed app has the same
+  # declared Helper version, preserve it instead of replacing/re-signing it.
+  # This protects existing Accessibility/Screen Recording grants during the
+  # 1.0 Server promotion.
+  if [[ -z "$EXISTING_FINGERPRINT" && "$EXISTING_VERSION" == "$VERSION" && "$ALLOW_UNVERSIONED_UPDATE" != "true" ]]; then
+    echo "Existing Computer MCP Helper $VERSION predates fingerprint tracking."
+    echo "Preserving it in place to avoid unnecessary macOS TCC permission churn."
+    echo "  app: $INSTALL_APP"
+    echo "To intentionally replace this same-version legacy Helper for development only:"
+    echo "  ALLOW_UNVERSIONED_HELPER_UPDATE=true scripts/install-macos-helper.sh"
     [[ -S "$SOCKET" ]] || launch_helper
     exit 0
   fi

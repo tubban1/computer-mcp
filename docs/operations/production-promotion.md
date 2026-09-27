@@ -83,7 +83,11 @@ Signing:   stable identity for production
 
 Ordinary TypeScript/MCP/browser/scheduler fixes must not reinstall the Helper.
 
-Run `scripts/install-macos-helper.sh` only for an intentional native Helper update. The installer skips replacement when its source fingerprint is unchanged and rejects changed source without a Helper version bump after the fingerprint baseline exists.
+Computer MCP 1.x freezes the native Helper source against `macos-helper/production-baseline.json`. The 1.0 Server promotion therefore reuses the already-authorized Helper rather than replacing it.
+
+Run `scripts/install-macos-helper.sh` only for an intentional native Helper update. The installer skips replacement when its source fingerprint is unchanged. A pre-fingerprint Helper with the same independent Helper version is also preserved in place by default, specifically to avoid unnecessary Accessibility/Screen Recording TCC churn. Changed Helper source requires an explicit version/baseline update.
+
+If no stable Apple code-signing identity is configured, do **not** replace the production Helper merely as part of a Server release. A future intentional native Helper update should establish stable signing before promotion.
 
 ## Promotion evidence
 

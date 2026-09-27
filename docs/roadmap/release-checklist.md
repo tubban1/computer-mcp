@@ -79,3 +79,4 @@ Use this checklist for release candidates and stable releases.
 - [ ] 24-hour soak clean
 - [ ] personal dogfood complete
 - [ ] Helper identity/version stability verified
+- [ ] Native Helper matches the frozen 1.x production baseline or an intentional independently versioned Helper release has passed signing/TCC validation
