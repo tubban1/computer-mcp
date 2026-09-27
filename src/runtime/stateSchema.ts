@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { runtimeStateRoot } from "./runtimePaths.js";
+import { AGENTOS_RUNTIME_VERSION } from "./runtimeVersion.js";
 
 export const AGENTOS_STATE_FORMAT = "agentos-runtime-state";
 export const CURRENT_STATE_SCHEMA_VERSION = 1;
@@ -70,7 +71,7 @@ function journalPath(root = runtimeStateRoot()): string {
 }
 
 function runtimeVersion(): string {
-  return process.env.AGENTOS_RUNTIME_VERSION?.trim() || "0.9.14";
+  return process.env.AGENTOS_RUNTIME_VERSION?.trim() || AGENTOS_RUNTIME_VERSION;
 }
 
 async function readJsonIfExists<T>(filePath: string): Promise<T | null> {

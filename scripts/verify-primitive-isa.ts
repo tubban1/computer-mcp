@@ -6,6 +6,9 @@ import {
   getPrimitiveCatalog,
   PRIMITIVE_ABI_VERSION,
 } from "../src/primitives/primitiveRuntime.js";
+import {
+  PRIMITIVE_ABI_V1_FROZEN,
+} from "../src/primitives/primitiveAbiV1Manifest.js";
 
 const catalog = getPrimitiveCatalog();
 const canonical = catalog.filter((entry: any) => entry.canonical === true);
@@ -51,6 +54,23 @@ for (const alias of aliases as any[]) {
 
 const byId = new Map(catalog.map((entry: any) => [entry.id, entry]));
 
+for (const [id, frozen] of Object.entries(
+  PRIMITIVE_ABI_V1_FROZEN.primitives,
+)) {
+  const current = byId.get(id) as any;
+  assert.ok(current, `Frozen Primitive ${id} was removed.`);
+  assert.equal(current.canonical, true, `${id} must remain canonical.`);
+  assert.equal(current.abiVersion, 1, `${id} changed ABI version.`);
+  assert.equal(current.stability, "stable", `${id} must remain stable.`);
+  assert.equal(current.tier, frozen.tier, `${id} changed tier.`);
+  for (const op of frozen.ops) {
+    assert.ok(
+      current.ops.includes(op),
+      `Frozen Primitive operation ${id}(${op}) was removed or renamed.`,
+    );
+  }
+}
+
 assert.equal((byId.get("sys.exec") as any)?.tier, "privileged");
 assert.equal((byId.get("admin.permission") as any)?.tier, "admin");
 assert.equal((byId.get("admin.permission") as any)?.stability, "experimental");
@@ -80,6 +100,9 @@ console.log(
       ok: true,
       primitiveAbiVersion: PRIMITIVE_ABI_VERSION,
       canonicalPrimitives: canonical.length,
+      frozenStablePrimitives: Object.keys(
+        PRIMITIVE_ABI_V1_FROZEN.primitives,
+      ).length,
       aliases: aliases.map((entry: any) => ({
         id: entry.id,
         replacement: entry.replacement,

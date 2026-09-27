@@ -1,6 +1,6 @@
 # Workspace Lease Contract
 
-Status: **v1 candidate**
+Status: **Contract v1 Stable for AgentOS Runtime 1.x**
 
 A workspace lease protects long-lived write ownership over a canonical workspace.
 
@@ -56,3 +56,10 @@ There is no silent force-steal in the normal contract.
 - managed processes can be explicitly claimed after Runtime recovery or original transport disconnection
 
 Verification: `npm run verify:concurrency` and `npm run verify:drain-handoff`.
+
+
+## 1.x compatibility
+
+Workspace Lease Contract v1 is additive within Runtime 1.x. Durable Task/Process/Transaction ownership, hierarchical conflicts, read-while-write-owned behavior, explicit handoff/takeover, and the prohibition on silent normal-path lease stealing remain stable semantics.
+
+See [AgentOS Runtime 1.x Compatibility Policy](compatibility-policy.md).

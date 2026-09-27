@@ -1,6 +1,6 @@
 {
   "name": "computer-mcp",
-  "version": "0.9.16",
+  "version": "1.0.0-rc.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "start:source": "PORT=${PORT:-8788} AGENTOS_RUNTIME_MODE=development AGENTOS_STATE_ROOT=${AGENTOS_STATE_ROOT:-$HOME/.computer-mcp-dev} tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "verify:isa": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-primitive-isa.ts",
+    "verify:contracts": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-contracts.ts",
     "verify:skill-abi": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-skill-abi.ts",
     "verify:task-memory": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-task-memory.ts",
     "verify:scheduler": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-scheduler.ts",

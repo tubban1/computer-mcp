@@ -50,7 +50,7 @@ const primitiveAliases: PrimitiveAlias[] = [
     id: "fs.query",
     canonical: "fs.stat",
     replacement: "fs.stat",
-    note: "fs.query is retained as a v0.9 compatibility alias and will not be part of the frozen v1 core ISA.",
+    note: "fs.query is retained as a deprecated 1.x compatibility alias and is not part of the canonical v1 core ISA.",
   },
 ];
 
@@ -116,12 +116,12 @@ const definitions: PrimitiveDefinition[] = [
       frontmost: {
         deprecated: true,
         replacement: "app.lifecycle(frontmost)",
-        note: "Retained for v0.9 compatibility; application state belongs to app.lifecycle.",
+        note: "Retained for 1.x deprecated compatibility; application state belongs to app.lifecycle.",
       },
       bounds: {
         deprecated: true,
         replacement: "app.lifecycle(bounds)",
-        note: "Retained for v0.9 compatibility; window state belongs to app.lifecycle.",
+        note: "Retained for 1.x deprecated compatibility; window state belongs to app.lifecycle.",
       },
     },
     route: (op, args) => {
@@ -312,7 +312,7 @@ const definitions: PrimitiveDefinition[] = [
       use_tab: {
         deprecated: true,
         replacement: "web.session(use_tab)",
-        note: "Tab/session state belongs to web.session; retained for v0.9 compatibility.",
+        note: "Tab/session state belongs to web.session; retained for 1.x deprecated compatibility.",
       },
     },
     route: (op, args) => {
@@ -431,7 +431,7 @@ const definitions: PrimitiveDefinition[] = [
       info: {
         deprecated: true,
         replacement: "fs.stat(get)",
-        note: "The transitional info op remains accepted during v0.9.",
+        note: "The deprecated info op remains accepted throughout 1.x.",
       },
     },
     route: (op, args) => {
@@ -548,7 +548,7 @@ const aliasById = new Map(primitiveAliases.map((alias) => [alias.id, alias]));
 function primitiveMetadata(definition: PrimitiveDefinition) {
   return {
     abiVersion: definition.abiVersion ?? PRIMITIVE_ABI_VERSION,
-    stability: definition.stability ?? "candidate",
+    stability: definition.stability ?? "stable",
     tier: definition.tier ?? "core",
     deprecated: definition.deprecated ?? false,
     replacement: definition.replacement ?? null,

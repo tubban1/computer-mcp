@@ -260,9 +260,11 @@ function fallbackReply(binding: SessionBinding, snapshot: BrowserSnapshot): {
   };
 }
 
+export const SESSION_ADAPTER_CONTRACT_VERSION = 1;
+
 export function getSessionAdapterContract() {
   return {
-    version: 1,
+    version: SESSION_ADAPTER_CONTRACT_VERSION,
     operations: [
       "bind",
       "identify",

@@ -5,6 +5,8 @@ import {
   LOCAL_VECTORIZER,
 } from "./retrievalVector.js";
 
+export const EMBEDDING_PROVIDER_CONTRACT_VERSION = 1;
+
 export type EmbeddingProviderId =
   | "feature-hash"
   | "openai"
@@ -34,7 +36,7 @@ export type EmbeddingBatchResult = {
 };
 
 export type EmbeddingProviderStatus = {
-  contractVersion: 1;
+  contractVersion: typeof EMBEDDING_PROVIDER_CONTRACT_VERSION;
   providerId: EmbeddingProviderId;
   model: string;
   configured: boolean;
@@ -493,7 +495,7 @@ export async function embedQueryForDescriptor(
 export function getEmbeddingProviderStatus(): EmbeddingProviderStatus {
   const provider = getEmbeddingProvider();
   return {
-    contractVersion: 1,
+    contractVersion: EMBEDDING_PROVIDER_CONTRACT_VERSION,
     providerId: provider.id,
     model: provider.model,
     configured: provider.configured,

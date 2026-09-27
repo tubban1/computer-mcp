@@ -1,6 +1,6 @@
 # AgentOS Runtime Embedding Provider Contract
 
-Status: **v0.9.10 foundation**
+Status: **Contract v1 Stable for AgentOS Runtime 1.x**
 
 The Embedding Provider Contract separates memory retrieval semantics from any one vector model or service.
 
@@ -119,3 +119,10 @@ embed
 - descriptor-aware query compatibility
 
 No real OpenAI network request is made by the verifier.
+
+
+## 1.x compatibility
+
+Embedding Provider Contract v1 is additive within Runtime 1.x. New providers may be added, but stored descriptor identity, descriptor-aware query compatibility, normalized vectors, and explicit remote-egress opt-in remain stable semantics.
+
+See [AgentOS Runtime 1.x Compatibility Policy](compatibility-policy.md).

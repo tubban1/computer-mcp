@@ -95,6 +95,8 @@ import {
 } from "./runtime/runtimeIdentity.js";
 import { withExecutionContext } from "./runtime/executionContext.js";
 import { resolveLogicalOwnerIdentity } from "./runtime/sessionIdentity.js";
+import { AGENTOS_RUNTIME_CONTRACTS } from "./runtime/contractVersions.js";
+import { AGENTOS_RUNTIME_VERSION } from "./runtime/runtimeVersion.js";
 import { runtimeSessionManager } from "./runtime/runtimeSessionManager.js";
 import {
   runtimeCandidateMode,
@@ -252,7 +254,7 @@ async function okImageFile(
 function createServer() {
   const server = new McpServer({
     name: "computer-mcp",
-    version: "0.9.16",
+    version: AGENTOS_RUNTIME_VERSION,
   });
 
   server.tool(
@@ -934,10 +936,11 @@ function createServer() {
     async () => {
       try {
         return ok({
-          version: "0.9.16",
+          version: AGENTOS_RUNTIME_VERSION,
           identity: getRuntimeIdentity(),
           runtimeClient: getRuntimeClientStatus(),
           performance: mcpPerformanceSnapshot(),
+          contracts: AGENTOS_RUNTIME_CONTRACTS,
           runtime: {
             ...runtimePathStatus(),
             sessions: runtimeSessionManager.summary(),
@@ -2351,10 +2354,11 @@ app.get("/health", async (_req, res) => {
   res.json({
     ok: true,
     service: "computer-mcp",
-    version: "0.9.16",
+    version: AGENTOS_RUNTIME_VERSION,
     identity: getRuntimeIdentity(),
     runtimeClient: getRuntimeClientStatus(),
     performance: mcpPerformanceSnapshot(),
+    contracts: AGENTOS_RUNTIME_CONTRACTS,
     runtime: {
       ...runtimePathStatus(),
       sessions: {
@@ -2448,7 +2452,7 @@ if (candidateMode) {
       `AgentOS candidate preflight mode: background controllers disabled.`,
     );
     console.log(
-      `computer-mcp v0.9.16 candidate listening on http://127.0.0.1:${port}/mcp`,
+      `computer-mcp v${AGENTOS_RUNTIME_VERSION} candidate listening on http://127.0.0.1:${port}/mcp`,
     );
   });
 } else {
@@ -2460,6 +2464,6 @@ if (candidateMode) {
     console.log(`AgentOS persistent scheduler poll=${scheduler.pollMs}ms`);
     console.log(`AgentOS loop controller poll=${loopController.pollMs}ms`);
     console.log(`AgentOS process monitor poll=${processMonitor.pollMs}ms`);
-    console.log(`computer-mcp v0.9.16 listening on http://127.0.0.1:${port}/mcp`);
+    console.log(`computer-mcp v${AGENTOS_RUNTIME_VERSION} listening on http://127.0.0.1:${port}/mcp`);
   });
 }

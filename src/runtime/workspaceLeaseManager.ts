@@ -23,6 +23,8 @@ const workspaceRuntimeInstanceId =
   "_" +
   randomUUID().replaceAll("-", "").slice(0, 8);
 
+export const WORKSPACE_LEASE_CONTRACT_VERSION = 1;
+
 export type WorkspaceLeaseRecord = {
   version: 1;
   id: string;
@@ -719,6 +721,7 @@ export async function unpinWorkspaceLeaseForProcess(
 
 export function getWorkspaceLeaseStorageInfo() {
   return {
+    contractVersion: WORKSPACE_LEASE_CONTRACT_VERSION,
     directory: leaseDir(),
     defaultTtlMs: leaseTtlMs(),
     runtimeInstanceId: workspaceRuntimeInstanceId,
