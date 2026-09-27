@@ -120,6 +120,12 @@ try {
   assert.equal(health.capabilities?.stateMigrationRegistry, true);
   assert.equal(health.capabilities?.crashRecoveryMatrix, true);
   assert.equal(health.capabilities?.multiAgentSoakHarness, true);
+  assert.equal(health.capabilities?.mcpLatencyTelemetry, true);
+  assert.equal(health.capabilities?.performanceRegressionGate, true);
+  assert.equal(
+    health.performance?.scope,
+    "server-received tools/call latency; excludes ChatGPT/gateway/network time before request arrival",
+  );
   assert.equal(
     health.capabilities?.sameRuntimeDisconnectedSessionReclamation,
     true,
@@ -155,6 +161,9 @@ try {
         versionedStateSchema: health.capabilities.versionedStateSchema,
         crashRecoveryMatrix: health.capabilities.crashRecoveryMatrix,
         multiAgentSoakHarness: health.capabilities.multiAgentSoakHarness,
+        mcpLatencyTelemetry: health.capabilities.mcpLatencyTelemetry,
+        performanceRegressionGate:
+          health.capabilities.performanceRegressionGate,
         sameRuntimeDisconnectedSessionReclamation:
           health.capabilities.sameRuntimeDisconnectedSessionReclamation,
         sameRuntimeIdleSessionReclamation:

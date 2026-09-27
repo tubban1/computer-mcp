@@ -9,6 +9,7 @@ This directory is organized by document purpose rather than release chronology.
 - [v1.0 roadmap](roadmap/v1.0.md)
 - [Production Runtime](operations/production-runtime.md)
 - [Production promotion policy](operations/production-promotion.md)
+- [Computer MCP 1.0 Performance P0](operations/performance-p0.md)
 - [Concurrency and ownership](architecture/concurrency-and-ownership.md)
 - [computer-mcp ↔ OWL Runtime coordination](architecture/cross-repo-coordination.md)
 
