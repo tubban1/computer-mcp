@@ -8,11 +8,13 @@ Use the normal installer for the first production installation:
 npm run install:production
 ```
 
-For an already installed Runtime that advertises `gracefulDrain`, use:
+For an already installed Runtime that advertises `gracefulDrain`, explicitly promote the candidate:
 
 ```bash
-npm run upgrade:production
+npm run promote:production
 ```
+
+`npm run upgrade:production` is retained as a compatibility alias. Promotion is never triggered by source development, tests, CI, Git activity, or OWL Runtime development.
 
 ## Upgrade sequence
 

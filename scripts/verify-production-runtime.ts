@@ -101,6 +101,12 @@ try {
   assert.equal(health.service, "computer-mcp");
   assert.equal(health.version, "0.9.16");
   assert.equal(health.runtime?.mode, "production");
+  assert.equal(health.runtimeClient?.backend, "legacy");
+  assert.equal(health.runtimeClient?.productionBackendLocked, true);
+  assert.equal(
+    health.runtimeClient?.productionArchitecturePolicy,
+    "standalone-through-1.x",
+  );
   assert.equal(path.resolve(health.runtime?.stateRoot), path.resolve(stateRoot));
   assert.equal(path.resolve(health.runtime?.codeRoot), path.resolve(root));
   assert.equal(health.capabilities?.sessionAwareConcurrency, true);
@@ -137,6 +143,9 @@ try {
         sourceWatcher: false,
         healthVersion: health.version,
         runtimeMode: health.runtime.mode,
+        runtimeBackend: health.runtimeClient.backend,
+        productionBackendLocked:
+          health.runtimeClient.productionBackendLocked,
         isolatedStateRoot: health.runtime.stateRoot,
         sessionAwareConcurrency: health.capabilities.sessionAwareConcurrency,
         workspaceLeases: health.capabilities.workspaceLeases,

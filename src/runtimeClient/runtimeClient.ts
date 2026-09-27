@@ -39,6 +39,27 @@ export interface RuntimeClient {
 function backendMode(): RuntimeBackendMode {
   const configured =
     process.env.COMPUTER_MCP_RUNTIME_BACKEND?.trim().toLowerCase() || "legacy";
+  const runtimeMode = (
+    process.env.COMPUTER_MCP_RUNTIME_MODE ??
+    process.env.AGENTOS_RUNTIME_MODE ??
+    "development"
+  )
+    .trim()
+    .toLowerCase();
+
+  // Computer MCP 1.x production is intentionally standalone. OWL Runtime may
+  // be exercised in development/test dogfood, but a backend architecture
+  // switch is a major-version production promotion (planned for 2.0+), never a
+  // patch/minor rollout or an accidental environment change.
+  if (
+    runtimeMode === "production" &&
+    configured !== "legacy"
+  ) {
+    throw new Error(
+      "PRODUCTION_BACKEND_LOCKED: Computer MCP 1.x production must use the standalone legacy backend. OWL Runtime is development/test dogfood only until an explicit major-version production promotion.",
+    );
+  }
+
   if (configured === "legacy") return "legacy";
   if (configured === "owl" || configured === "owl-http") return "owl-http";
   throw new Error(
@@ -250,13 +271,25 @@ export function getRuntimeClient(): RuntimeClient {
 
 export function getRuntimeClientStatus() {
   const backend = backendMode();
+  const runtimeMode = (
+    process.env.COMPUTER_MCP_RUNTIME_MODE ??
+    process.env.AGENTOS_RUNTIME_MODE ??
+    "development"
+  )
+    .trim()
+    .toLowerCase();
+
   return {
     backend,
     defaultBackend: "legacy",
+    runtimeMode,
+    productionArchitecturePolicy: "standalone-through-1.x",
+    plannedRuntimeBackedMajor: "2.0",
+    productionBackendLocked: runtimeMode === "production",
     owlPublicApiVersion: OWL_RUNTIME_PUBLIC_API_VERSION,
     owlRuntimeUrl: owlRuntimeUrl(),
     owlConfigured: backend === "owl-http",
-    migrationPolicy: "per-capability",
+    migrationPolicy: "development-per-capability; production-major-only",
     fallbackPolicy:
       backend === "legacy"
         ? "legacy-explicit"
