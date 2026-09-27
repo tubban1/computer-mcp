@@ -35,6 +35,19 @@ AGENTOS_WAKE_NAME=Jarvis
 AGENTOS_ALIASES=AgentOS,OWL,Jarvis
 ```
 
+## Resource wait budgets
+
+Interactive MCP calls fail bounded local resource contention rather than silently waiting until the outer transport fails:
+
+```text
+MCP_RESOURCE_WAIT_TIMEOUT_MS=3000
+BACKGROUND_RESOURCE_WAIT_TIMEOUT_MS=60000
+```
+
+MCP waits are bounded to at least 250 ms; background waits to at least 1 second; both are capped at 10 minutes. Request cancellation interrupts the Arbiter wait immediately.
+
+These budgets apply after the request reaches computer-mcp. They cannot control time spent before arrival in an external gateway/tunnel.
+
 ## Browser startup
 
 Chrome startup can vary significantly by macOS/Chrome version and machine load. The Runtime waits up to 60 seconds for the local DevTools endpoint by default. Override with:

@@ -35,6 +35,7 @@ Use this checklist for release candidates and stable releases.
 - [ ] Fresh immutable release verifier (`npm ci --omit=dev`, no source checkout dependency)
 - [ ] Production boundary verifier
 - [ ] Performance P0 verifier
+- [ ] Resource wait timeout/cancellation verifier
 - [ ] Read-only observation remains responsive under unrelated workspace write load
 - [ ] Reconnect churn returns active MCP session/transport counts to a bounded baseline
 

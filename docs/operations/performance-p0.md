@@ -107,9 +107,19 @@ Computer MCP 1.0 owns:
 - bounded session lifecycle, including repeated reconnect churn without active-session accumulation;
 - stale transport cleanup;
 - cancellation propagation;
+- bounded resource waits for admitted MCP requests;
 - orphan process cleanup/claim semantics;
 - local health endpoint;
 - server-side latency diagnostics.
+
+Once an MCP request has reached computer-mcp, resource contention must not silently consume the whole outer transport timeout. Interactive MCP actions default to a 3-second resource-wait budget and honor the request AbortSignal. Background Task/Scheduler/Loop work keeps a longer default budget.
+
+```text
+MCP_RESOURCE_WAIT_TIMEOUT_MS=3000
+BACKGROUND_RESOURCE_WAIT_TIMEOUT_MS=60000
+```
+
+Timeout/cancellation removes the pending Arbiter waiter; it must not leave a poisoned queue entry or orphaned future acquisition.
 
 The external Secure MCP Tunnel / ChatGPT gateway owns part of reconnect timing that the local MCP server cannot retry after a request never reaches it.
 
