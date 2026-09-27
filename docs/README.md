@@ -55,6 +55,7 @@ Contracts intended to remain stable across implementations.
 - [Graceful drain and workspace handoff](operations/graceful-drain-and-handoff.md)
 - [Multi-agent soak testing](operations/soak-testing.md)
 - [Configuration](operations/configuration.md)
+- [Tunnel client setup](operations/tunnel-client.md)
 - [Recovery](operations/recovery.md)
 - [Fault recovery matrix](operations/fault-recovery.md)
 - [Troubleshooting](operations/troubleshooting.md)

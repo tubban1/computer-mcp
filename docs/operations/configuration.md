@@ -48,6 +48,18 @@ MCP waits are bounded to at least 250 ms; background waits to at least 1 second;
 
 These budgets apply after the request reaches computer-mcp. They cannot control time spent before arrival in an external gateway/tunnel.
 
+## Tunnel client credentials
+
+Use the one-time setup flow instead of typing Tunnel ID and API key on every start:
+
+```text
+npm run tunnel:setup
+npm run tunnel:status
+npm run tunnel:run
+```
+
+The API key is stored outside Git in a mode `0600` secret file and passed to `tunnel-client-runtime` by `file:` reference, not as a command-line credential. See [Tunnel client setup](tunnel-client.md).
+
 ## Browser startup
 
 Chrome startup can vary significantly by macOS/Chrome version and machine load. The Runtime waits up to 60 seconds for the local DevTools endpoint by default. Override with:
