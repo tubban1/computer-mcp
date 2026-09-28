@@ -699,9 +699,14 @@ export async function resolvePendingSessionSend(
   await writeSessionBinding(binding);
   return {
     sessionId: binding.id,
+    adapterId: binding.adapterId,
     resolved: true,
     resolution,
     turn: binding.turnCounter,
+    pending: {
+      digest: pending.digest,
+      text: pending.text,
+    },
     lastSendReceipt: binding.lastSendReceipt ?? null,
   };
 }
