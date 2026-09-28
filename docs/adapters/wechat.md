@@ -22,12 +22,17 @@ wechat_session_...
       |      background when bound chat is already visible
       |      short foreground fallback when necessary
       |
-      +--> send
+      +--> inbox_scan / health
+      |      background window OCR
+      |      changed-conversation wake signal
+      |      typed health state
+      |
+      +--> send / send_file
              foreground transaction
              verify contact
-             send
+             send text or attachment
              durable receipt
-             restore previous app
+             restore clipboard + previous app
 ```
 
 ## Low-interruption mode
@@ -47,7 +52,7 @@ If the bound conversation is not active, `capture_latest` can perform a short fo
 5. capture the latest visible text
 6. restore the previous application
 
-Sending always uses the foreground transaction because it creates an external UI side effect.
+Sending always uses the foreground transaction because it creates an external UI side effect. Text sends are post-observed, and attachment sends use a macOS file-URL clipboard payload with full-fidelity clipboard restoration. If post-send OCR cannot prove the exact filename/message, the receipt is marked `uncertain` rather than silently claiming verified delivery.
 
 ## Why OCR instead of Accessibility
 
@@ -73,7 +78,8 @@ A binding retains:
 - last visible/reply text
 - turn counter
 - pending-send state
-- last send receipt
+- last send receipt, including text/file type and verification state
+- last inbox-row digest / visible inbox text
 - focus duration metadata
 
 ## Probe versus capture
@@ -113,7 +119,10 @@ bind
 identify
 probe
 capture_latest
+inbox_scan
+health
 send
+send_file
 resolve_pending
 list
 delete
@@ -130,3 +139,16 @@ Reinstalling or re-signing the Helper may cause macOS to require those permissio
 `npm run verify:wechat-session` validates background-probe semantics with OCR fixtures without taking real focus or sending a real message.
 
 The native Helper source is additionally syntax-checked by `npm run verify:macos-helper`. A full helper build is performed by `scripts/install-macos-helper.sh`.
+
+
+## Inbox scanner and health
+
+`inbox_scan` performs background OCR over the visible WeChat conversation list. It is intentionally a **wake signal**, not the authority for message content: a changed conversation-row digest tells the Runtime which bound Session may need `capture_latest`.
+
+`health` projects typed states such as `ready`, `logged_out`, `permission_missing`, `app_unavailable`, `gui_session_unavailable`, and `unreadable`. This lets a commercial Worker surface **Needs Attention** instead of treating every WeChat problem as a generic timeout.
+
+## Attachment sending
+
+`send_file` accepts a regular file inside `ALLOWED_DIRECTORIES`. Before the external side effect it persists a crash-safe pending-send record including filename and SHA-256. The Runtime snapshots the user's existing macOS pasteboard, places the file URL on the clipboard, pastes into the verified WeChat chat, sends, observes the result, then restores the original pasteboard.
+
+A crash after a possible send leaves the pending state unresolved; automatic replay is blocked until it is explicitly resolved as `sent` or `not_sent`.
