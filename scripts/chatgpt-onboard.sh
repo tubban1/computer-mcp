@@ -83,6 +83,46 @@ ensure_production() {
   production_health >/dev/null 2>&1 || die "Production install finished but /health is not ready."
 }
 
+cloud_auth_required() {
+  /bin/zsh -c '
+    set -a
+    [[ -f "$1" ]] && source "$1"
+    set +a
+    case "${AGENTOS_CLOUD_AUTH_REQUIRED:-false}" in
+      1|true|TRUE|yes|YES|on|ON) exit 0 ;;
+      *) exit 1 ;;
+    esac
+  ' _ "$ENV_FILE"
+}
+
+run_cloud_command() {
+  local command="$1"
+  (
+    set -a
+    [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
+    set +a
+    cd "$REPO_ROOT"
+    npm run "cloud:$command"
+  )
+}
+
+ensure_cloud_authorized() {
+  if ! cloud_auth_required; then
+    printf 'Cloud device authorization is not required by this Production profile.\n'
+    return 0
+  fi
+
+  if run_cloud_command status >/dev/null 2>&1; then
+    printf 'Computer MCP cloud device grant is active.\n'
+    return 0
+  fi
+
+  printf 'This Production profile requires an OWL cloud account device grant.\n'
+  run_cloud_command login
+  run_cloud_command status >/dev/null 2>&1 ||
+    die "Cloud device authorization did not become active."
+}
+
 ensure_tunnel_config() {
   if [[ -s "$TUNNEL_ID_FILE" && -s "$API_KEY_FILE" && -s "$RUNTIME_FILE" ]]; then
     printf 'Tunnel credentials and runtime are already configured.\n'
@@ -141,13 +181,16 @@ printf 'This flow never upgrades an existing healthy Production Runtime.\n'
 step 1 'Checking Computer MCP Production'
 ensure_production
 
-step 2 'Checking Secure MCP Tunnel configuration'
+step 2 'Checking OWL cloud device authorization'
+ensure_cloud_authorized
+
+step 3 'Checking Secure MCP Tunnel configuration'
 ensure_tunnel_config
 
-step 3 'Ensuring the tunnel is available'
+step 4 'Ensuring the tunnel is available'
 ensure_tunnel_running
 
-step 4 'Preparing ChatGPT handoff'
+step 5 'Preparing ChatGPT handoff'
 copy_tunnel_id
 write_record
 open_chatgpt
