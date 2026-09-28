@@ -102,6 +102,20 @@ async function readCredential(): Promise<CloudDeviceCredential | null> {
   }
 }
 
+async function writeCredential(credential: CloudDeviceCredential): Promise<void> {
+  const target = cloudCredentialPath();
+  await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await fs.chmod(path.dirname(target), 0o700).catch(() => undefined);
+  const temp = target + "." + process.pid + ".tmp";
+  await fs.writeFile(
+    temp,
+    JSON.stringify(credential, null, 2) + "\n",
+    { encoding: "utf8", mode: 0o600 },
+  );
+  await fs.rename(temp, target);
+  await fs.chmod(target, 0o600).catch(() => undefined);
+}
+
 async function invokeDeviceSync(
   credential: CloudDeviceCredential,
   body: Record<string, unknown>,
@@ -129,6 +143,49 @@ async function invokeDeviceSync(
   }
   return payload;
 }
+async function refreshCredentialIfNeeded(
+  credential: CloudDeviceCredential,
+): Promise<CloudDeviceCredential> {
+  const refreshBeforeMs = Math.min(
+    Math.max(
+      Number(process.env.AGENTOS_CLOUD_TOKEN_REFRESH_BEFORE_MS) ||
+        7 * 24 * 60 * 60_000,
+      60_000,
+    ),
+    29 * 24 * 60 * 60_000,
+  );
+  if (Date.parse(credential.expiresAt) - Date.now() > refreshBeforeMs) {
+    return credential;
+  }
+
+  const result = await invokeDeviceSync(credential, {
+    action: "refresh_token",
+  }) as {
+    access_token?: string;
+    expires_at?: string;
+    device?: { id?: string; device_name?: string; platform?: string };
+    grants?: { capabilities?: string[]; scopes?: Record<string, unknown> };
+  };
+  if (!result.access_token || !result.expires_at) {
+    throw new Error("CLOUD_DEVICE_TOKEN_REFRESH_INVALID");
+  }
+
+  const refreshed: CloudDeviceCredential = {
+    ...credential,
+    accessToken: result.access_token,
+    expiresAt: result.expires_at,
+    deviceId: result.device?.id ?? credential.deviceId,
+    deviceName: result.device?.device_name ?? credential.deviceName,
+    platform: result.device?.platform ?? credential.platform,
+    capabilities: result.grants?.capabilities ?? credential.capabilities,
+    scopes: result.grants?.scopes ?? credential.scopes,
+    authorizedAt: new Date().toISOString(),
+  };
+  await writeCredential(refreshed);
+  cachedAuthorization = undefined;
+  return refreshed;
+}
+
 
 export async function getCloudAuthorizationStatus(
   options: { force?: boolean } = {},
@@ -159,7 +216,7 @@ export async function getCloudAuthorizationStatus(
     return cachedAuthorization.status;
   }
 
-  const credential = await readCredential();
+  let credential = await readCredential();
   if (!credential) {
     const status: CloudAuthorizationStatus = {
       enabled: true,
@@ -192,6 +249,7 @@ export async function getCloudAuthorizationStatus(
   }
 
   try {
+    credential = await refreshCredentialIfNeeded(credential);
     const result = await invokeDeviceSync(credential, { action: "authorize" }) as AuthorizationResult;
     const capabilities = result.grants?.capabilities ?? credential.capabilities ?? [];
     const status: CloudAuthorizationStatus = {
