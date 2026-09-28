@@ -58,11 +58,11 @@ import {
   listBrowserAgentSessions,
   rebindBrowserAgentSession,
   removeBrowserAgentSession,
-  resolvePendingSessionSend,
 } from "../runtime/sessionAdapters.js";
 import type { SessionAdapterId } from "../runtime/sessionStore.js";
 import {
   captureLatestSessionEndpoint,
+  resolvePendingSessionEndpoint,
   sendFileSessionEndpoint,
   sendSessionEndpoint,
 } from "../runtime/sessionEndpoint.js";
@@ -108,7 +108,6 @@ import {
   listPersistentWeChatSessions,
   probeWeChatSession,
   scanWeChatInbox,
-  resolvePendingWeChatSend,
   weChatSessionAdapterContract,
 } from "../runtime/wechatSessionAdapter.js";
 
@@ -1671,7 +1670,7 @@ const skills: SkillDefinition[] = [
         if (!["sent", "not_sent"].includes(resolution)) {
           throw new Error('resolution must be "sent" or "not_sent".');
         }
-        return await resolvePendingSessionSend(
+        return await resolvePendingSessionEndpoint(
           sessionId,
           resolution as "sent" | "not_sent",
         );
@@ -2215,7 +2214,7 @@ const skills: SkillDefinition[] = [
         if (!["sent", "not_sent"].includes(resolution)) {
           throw new Error('resolution must be "sent" or "not_sent".');
         }
-        return await resolvePendingWeChatSend(
+        return await resolvePendingSessionEndpoint(
           sessionId,
           resolution as "sent" | "not_sent",
         );
