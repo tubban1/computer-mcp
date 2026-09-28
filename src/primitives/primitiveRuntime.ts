@@ -183,6 +183,7 @@ const definitions: PrimitiveDefinition[] = [
     ops: [
       "read",
       "write",
+      "write_file",
       "info",
       "snapshot",
       "restore",
@@ -195,6 +196,7 @@ const definitions: PrimitiveDefinition[] = [
         [
           "read",
           "write",
+          "write_file",
           "info",
           "snapshot",
           "restore",
@@ -206,6 +208,7 @@ const definitions: PrimitiveDefinition[] = [
       const action = {
         read: "desktop.clipboard_read",
         write: "desktop.clipboard_write",
+        write_file: "desktop.clipboard_write_file",
         info: "desktop.clipboard_info",
         snapshot: "desktop.clipboard_snapshot",
         restore: "desktop.clipboard_restore",

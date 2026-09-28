@@ -18,6 +18,8 @@ const {
   listPersistentWeChatSessions,
   probeWeChatSession,
   captureLatestWeChatReply,
+  getWeChatSessionHealth,
+  scanWeChatInbox,
   resolvePendingWeChatSend,
   weChatSessionAdapterContract,
 } = await import("../src/runtime/wechatSessionAdapter.js");
@@ -121,6 +123,69 @@ try {
   assert.equal(unchanged.changed, false);
   assert.equal(unchanged.focused, false);
 
+  await writeFixture({
+    path: "/fixture/wechat-inbox.png",
+    windowId: 42,
+    windowName: "微信",
+    observations: [
+      {
+        text: "drone2master",
+        confidence: 0.99,
+        x: 0.05,
+        y: 0.72,
+        width: 0.18,
+        height: 0.04,
+      },
+      {
+        text: "old preview",
+        confidence: 0.95,
+        x: 0.08,
+        y: 0.70,
+        width: 0.16,
+        height: 0.03,
+      },
+    ],
+  });
+  const inboxBaseline = await scanWeChatInbox();
+  assert.equal(inboxBaseline.state, "ready");
+  assert.equal(inboxBaseline.sessions.length, 1);
+  assert.equal(inboxBaseline.sessions[0]?.visible, true);
+  assert.equal(inboxBaseline.sessions[0]?.baseline, true);
+
+  const inboxUnchanged = await scanWeChatInbox();
+  assert.equal(inboxUnchanged.sessions[0]?.changed, false);
+
+  await writeFixture({
+    path: "/fixture/wechat-inbox.png",
+    windowId: 42,
+    windowName: "微信",
+    observations: [
+      {
+        text: "drone2master",
+        confidence: 0.99,
+        x: 0.05,
+        y: 0.72,
+        width: 0.18,
+        height: 0.04,
+      },
+      {
+        text: "new preview",
+        confidence: 0.95,
+        x: 0.08,
+        y: 0.70,
+        width: 0.16,
+        height: 0.03,
+      },
+    ],
+  });
+  const inboxChanged = await scanWeChatInbox();
+  assert.equal(inboxChanged.sessions[0]?.changed, true);
+
+  const health = await getWeChatSessionHealth(sessionId);
+  assert.equal(health.endpoint, "wechat");
+  assert.equal(health.state, "ready");
+  assert.equal(health.windowReadable, true);
+
   await writeFixture(
     fixture("drone2master", [
       { text: "old incoming", x: 0.35, y: 0.54 },
@@ -206,6 +271,8 @@ try {
         foregroundFallbackExplicit: true,
         defaultPollIntervalMs: 30_000,
         crashSafePendingSend: true,
+        inboxScanner: true,
+        healthProjection: true,
         encryptedSessionStore: contract.storage.encryptedAtRest,
       },
       null,

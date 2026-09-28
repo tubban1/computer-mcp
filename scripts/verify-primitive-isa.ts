@@ -78,6 +78,10 @@ assert.equal((byId.get("fs.query") as any)?.canonical, false);
 assert.equal((byId.get("fs.query") as any)?.replacement, "fs.stat");
 assert.ok((byId.get("fs.stat") as any)?.ops.includes("get"));
 assert.ok((byId.get("vision.capture") as any)?.ops.includes("page"));
+assert.ok(
+  (byId.get("clipboard") as any)?.ops.includes("write_file"),
+  "clipboard(write_file) must remain available for native attachment workflows.",
+);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skillSource = fs.readFileSync(

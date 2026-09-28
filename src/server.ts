@@ -54,6 +54,10 @@ import {
 } from "./tools/transactionOps.js";
 import { appendAudit, getAuditLogPath, readAuditLog, sanitizeAuditArgs } from "./audit.js";
 import { envFlag } from "./security/capabilities.js";
+import {
+  assertCloudAuthorized,
+  getCloudAuthorizationStatus,
+} from "./cloud/cloudDevice.js";
 import { configuredRoots, runtimeOwnedRoots } from "./security/pathGuard.js";
 import { getProviderStatuses } from "./providers/registry.js";
 import {
@@ -2234,6 +2238,7 @@ app.all("/mcp", async (req, res) => {
     if (body?.method === "tools/call" && body.params?.name) {
       const toolName = body.params.name;
       const toolArgs = body.params.arguments ?? {};
+      await assertCloudAuthorized();
       const effectiveSessionId =
         sessionId ??
         activeSession.transport.sessionId ??
@@ -2337,10 +2342,27 @@ app.all("/mcp", async (req, res) => {
     }
   } catch (error) {
     if (!res.headersSent) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      res
+        .status(message.startsWith("CLOUD_AUTH_REQUIRED:") ? 403 : 500)
+        .json({ error: message });
     }
   }
 });
+
+async function publicCloudHealth() {
+  const status = await getCloudAuthorizationStatus();
+  return {
+    enabled: status.enabled,
+    required: status.required,
+    syncEnabled: status.syncEnabled,
+    loggedIn: status.loggedIn,
+    authorized: status.authorized,
+    capabilities: status.capabilities,
+    expiresAt: status.expiresAt ?? null,
+    reason: status.reason ?? null,
+  };
+}
 
 function runtimeHealthLifecycle() {
   const lifecycle = runtimeLifecycle.status();
@@ -2359,6 +2381,7 @@ app.get("/health", async (_req, res) => {
     contracts: AGENTOS_RUNTIME_CONTRACTS,
     runtimeClient: getRuntimeClientStatus(),
     performance: mcpPerformanceSnapshot(),
+    cloud: await publicCloudHealth(),
     runtime: {
       ...runtimePathStatus(),
       sessions: {

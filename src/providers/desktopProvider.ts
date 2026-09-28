@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { envFlag } from "../security/capabilities.js";
-import { assertAllowedTargetPath } from "../security/pathGuard.js";
+import {
+  assertAllowedExistingPath,
+  assertAllowedTargetPath,
+} from "../security/pathGuard.js";
 import type { ComputerProvider, ProviderStatus } from "./types.js";
 
 export type DesktopUiElement = {
@@ -724,6 +727,37 @@ class DesktopProvider implements ComputerProvider {
       throw new Error(result.stderr.trim() || "pbcopy failed.");
     }
     return { writtenCharacters: text.length };
+  }
+
+  async clipboardWriteFile(filePath: string) {
+    requireDesktopEnabled();
+    const resolved = await assertAllowedExistingPath(filePath);
+    const stat = await fs.stat(resolved);
+    if (!stat.isFile()) {
+      throw new Error("Clipboard file payload must reference a regular file.");
+    }
+
+    const fileLiteral = JSON.stringify(resolved);
+    const raw = await jxa(
+      'ObjC.import("AppKit"); ObjC.import("Foundation"); var p=' +
+        fileLiteral +
+        '; var pb=$.NSPasteboard.generalPasteboard; var url=$.NSURL.fileURLWithPath($(p)); var arr=$.NSMutableArray.alloc.init; arr.addObject(url); pb.clearContents; var ok=pb.writeObjects(arr); JSON.stringify({written:Boolean(ok),changeCount:Number(pb.changeCount)})',
+    );
+    const result = JSON.parse(raw || '{"written":false,"changeCount":0}') as {
+      written: boolean;
+      changeCount: number;
+    };
+    if (!result.written) {
+      throw new Error("macOS refused to place the file URL on the clipboard.");
+    }
+    return {
+      path: resolved,
+      filename: path.basename(resolved),
+      bytes: stat.size,
+      written: true,
+      changeCount: result.changeCount,
+      payload: "file-url",
+    };
   }
 
   async clipboardSnapshot() {

@@ -27,11 +27,17 @@ export type WeChatSessionBinding = {
   lastReply?: string;
   lastProbeAt?: string;
   lastCaptureAt?: string;
+  lastInboxObservedAt?: string;
+  lastInboxRowDigest?: string;
+  lastInboxRowText?: string;
   turnCounter: number;
   pendingSend?: {
     at: string;
     digest: string;
     text: string;
+    messageType?: "text" | "file";
+    filename?: string;
+    fileSha256?: string;
   };
   lastSendReceipt?: {
     at: string;
@@ -39,6 +45,10 @@ export type WeChatSessionBinding = {
     turn: number;
     contactName: string;
     focusHeldMs: number;
+    messageType?: "text" | "file";
+    filename?: string;
+    fileSha256?: string;
+    verification?: "verified" | "uncertain";
   };
 };
 

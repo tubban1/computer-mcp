@@ -239,6 +239,17 @@ export function getActionContract(action: string, args: unknown = {}): ActionCon
       resources: [resource("desktop.focus", "exclusive")],
     };
   }
+  if (action === "desktop.clipboard_write_file") {
+    return {
+      riskLevel: "high",
+      idempotent: false,
+      sideEffects: ["clipboard_file_payload"],
+      retryPolicy: "manual",
+      requiresVerification: false,
+      parallelSafe: false,
+      resources: [resource("desktop.clipboard", "exclusive")],
+    };
+  }
   if (action === "desktop.clipboard_restore") {
     return {
       riskLevel: "medium",
