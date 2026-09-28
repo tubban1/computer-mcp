@@ -54,6 +54,10 @@ import {
 } from "./tools/transactionOps.js";
 import { appendAudit, getAuditLogPath, readAuditLog, sanitizeAuditArgs } from "./audit.js";
 import { envFlag } from "./security/capabilities.js";
+import {
+  assertCloudAuthorized,
+  getCloudAuthorizationStatus,
+} from "./cloud/cloudDevice.js";
 import { configuredRoots, runtimeOwnedRoots } from "./security/pathGuard.js";
 import { getProviderStatuses } from "./providers/registry.js";
 import {
@@ -2234,6 +2238,7 @@ app.all("/mcp", async (req, res) => {
     if (body?.method === "tools/call" && body.params?.name) {
       const toolName = body.params.name;
       const toolArgs = body.params.arguments ?? {};
+      await assertCloudAuthorized();
       const effectiveSessionId =
         sessionId ??
         activeSession.transport.sessionId ??
@@ -2359,6 +2364,7 @@ app.get("/health", async (_req, res) => {
     contracts: AGENTOS_RUNTIME_CONTRACTS,
     runtimeClient: getRuntimeClientStatus(),
     performance: mcpPerformanceSnapshot(),
+    cloud: await getCloudAuthorizationStatus(),
     runtime: {
       ...runtimePathStatus(),
       sessions: {
