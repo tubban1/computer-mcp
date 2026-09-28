@@ -2163,6 +2163,17 @@ const skills: SkillDefinition[] = [
         });
       }
 
+      if (operation === "inbox_scan") {
+        return await scanWeChatInbox();
+      }
+      if (operation === "health") {
+        return await getWeChatSessionHealth(
+          typeof args.session_id === "string" && args.session_id.trim()
+            ? args.session_id.trim()
+            : undefined,
+        );
+      }
+
       const sessionId = requiredText(args, "session_id");
 
       if (operation === "identify") {
@@ -2170,12 +2181,6 @@ const skills: SkillDefinition[] = [
       }
       if (operation === "probe") {
         return await probeWeChatSession(sessionId);
-      }
-      if (operation === "inbox_scan") {
-        return await scanWeChatInbox();
-      }
-      if (operation === "health") {
-        return await getWeChatSessionHealth(sessionId);
       }
       if (operation === "capture_latest") {
         return await captureLatestSessionEndpoint(sessionId, {
