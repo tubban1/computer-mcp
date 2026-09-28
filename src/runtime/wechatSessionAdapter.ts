@@ -1,8 +1,10 @@
 import { runtimeStatePath } from "./runtimePaths.js";
 import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { assertAllowedExistingPath } from "../security/pathGuard.js";
 import { executePrimitive } from "../primitives/primitiveRuntime.js";
 import { resourceArbiter } from "./resourceArbiter.js";
 import {
@@ -52,6 +54,17 @@ function digest(value: string): string {
 function normalize(value: string): string {
   return value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
 }
+
+async function sha256File(filePath: string): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
 
 function stagingRoot(): string {
   return (
@@ -193,12 +206,11 @@ function visibleConversation(
   };
 }
 
-async function backgroundOcr(
+async function backgroundWindowOcr(
   sessionId: string,
-  contactName: string,
   languages: string[],
   held: string[] = [],
-) {
+): Promise<{ target: string; result: OcrWindowResult }> {
   const target = probePath(sessionId);
   await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const fixturePath =
@@ -215,6 +227,20 @@ async function backgroundOcr(
         },
         held,
       )) as OcrWindowResult);
+  return { target, result };
+}
+
+async function backgroundOcr(
+  sessionId: string,
+  contactName: string,
+  languages: string[],
+  held: string[] = [],
+) {
+  const { target, result } = await backgroundWindowOcr(
+    sessionId,
+    languages,
+    held,
+  );
   const parsed = visibleConversation(result, contactName);
   const contentDigest = parsed.visibleText
     ? digest(parsed.visibleText)
@@ -225,6 +251,244 @@ async function backgroundOcr(
     parsed,
     contentDigest,
   };
+}
+
+type InboxRow = {
+  text: string;
+  normalizedText: string;
+  y: number;
+  digest: string;
+};
+
+function visibleInboxRows(result: OcrWindowResult): InboxRow[] {
+  const ignored = new Set([
+    "微信", "wechat", "聊天", "通讯录", "发现", "我", "朋友圈",
+    "小程序", "视频号", "搜索", "search",
+  ]);
+  const observations = Array.isArray(result.observations)
+    ? result.observations
+        .filter(
+          (item) =>
+            typeof item.text === "string" &&
+            item.text.trim().length > 0 &&
+            typeof item.x === "number" &&
+            typeof item.y === "number",
+        )
+        .map((item) => ({
+          text: item.text!.trim(),
+          x: item.x!,
+          y: item.y!,
+          width: typeof item.width === "number" ? item.width : 0,
+          height: typeof item.height === "number" ? item.height : 0,
+        }))
+        .filter((item) => {
+          const centerX = item.x + item.width / 2;
+          const value = normalize(item.text);
+          return (
+            centerX < 0.31 &&
+            item.y >= 0.08 &&
+            item.y <= 0.93 &&
+            !ignored.has(value)
+          );
+        })
+    : [];
+
+  const groups: Array<{ y: number; items: typeof observations }> = [];
+  for (const item of observations) {
+    const centerY = item.y + item.height / 2;
+    const group = groups.find((candidate) => Math.abs(candidate.y - centerY) <= 0.026);
+    if (group) {
+      group.items.push(item);
+      group.y =
+        group.items.reduce(
+          (sum, current) => sum + current.y + current.height / 2,
+          0,
+        ) / group.items.length;
+    } else {
+      groups.push({ y: centerY, items: [item] });
+    }
+  }
+
+  return groups
+    .map((group) => {
+      const text = group.items
+        .slice()
+        .sort((a, b) => a.x - b.x)
+        .map((item) => item.text)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return {
+        text,
+        normalizedText: normalize(text),
+        y: group.y,
+        digest: digest(text),
+      };
+    })
+    .filter((row) => row.text.length > 0)
+    .sort((a, b) => b.y - a.y);
+}
+
+function classifyWeChatWindow(text: string) {
+  const value = normalize(text);
+  if (
+    value.includes("登录微信") ||
+    value.includes("扫码登录") ||
+    value.includes("log in to wechat") ||
+    value.includes("scan to log in")
+  ) {
+    return "logged_out" as const;
+  }
+  return "ready" as const;
+}
+
+export async function scanWeChatInbox() {
+  const bindings = await listWeChatSessions();
+  if (bindings.length === 0) {
+    return {
+      endpoint: "wechat",
+      state: "no_sessions",
+      observedAt: new Date().toISOString(),
+      rows: [],
+      sessions: [],
+    };
+  }
+
+  const languages = [
+    ...new Set(bindings.flatMap((binding) => binding.ocrLanguages)),
+  ].slice(0, 8);
+  const { result } = await backgroundWindowOcr(
+    "_inbox",
+    languages.length ? languages : ["zh-Hans", "en-US"],
+  );
+  const rawText =
+    typeof result.text === "string"
+      ? result.text
+      : (result.observations ?? [])
+          .map((item) => item.text ?? "")
+          .filter(Boolean)
+          .join("\n");
+  const windowState = classifyWeChatWindow(rawText);
+  const rows = visibleInboxRows(result);
+  const now = new Date().toISOString();
+  const sessions = [];
+
+  for (const binding of bindings) {
+    const contact = normalize(binding.contactName);
+    const row = rows.find(
+      (candidate) =>
+        candidate.normalizedText === contact ||
+        candidate.normalizedText.includes(contact) ||
+        contact.includes(candidate.normalizedText),
+    );
+    const previousDigest = binding.lastInboxRowDigest;
+    const changed =
+      Boolean(row?.digest) &&
+      Boolean(previousDigest) &&
+      row!.digest !== previousDigest;
+
+    binding.lastInboxObservedAt = now;
+    if (row) {
+      binding.lastInboxRowDigest = row.digest;
+      binding.lastInboxRowText = row.text;
+    }
+    await writeWeChatSession(binding);
+
+    sessions.push({
+      sessionId: binding.id,
+      contactName: binding.contactName,
+      visible: Boolean(row),
+      changed,
+      baseline: Boolean(row) && !previousDigest,
+      rowText: row?.text ?? null,
+      rowDigest: row?.digest ?? null,
+      confidence: "heuristic",
+    });
+  }
+
+  return {
+    endpoint: "wechat",
+    state: windowState,
+    observedAt: now,
+    rows: rows.map((row) => ({ text: row.text, digest: row.digest })),
+    sessions,
+    note:
+      "Inbox scanning is a background OCR heuristic over visible conversation rows. A changed row is a wake signal; capture_latest remains the message-content authority.",
+  };
+}
+
+export async function getWeChatSessionHealth(id?: string) {
+  const bindings = id
+    ? [await readWeChatSession(id)]
+    : await listWeChatSessions();
+  if (bindings.length === 0) {
+    return {
+      endpoint: "wechat",
+      healthy: false,
+      state: "no_sessions",
+      sessions: [],
+    };
+  }
+
+  try {
+    const languages = [
+      ...new Set(bindings.flatMap((binding) => binding.ocrLanguages)),
+    ].slice(0, 8);
+    const { result } = await backgroundWindowOcr(
+      "_health",
+      languages.length ? languages : ["zh-Hans", "en-US"],
+    );
+    const text =
+      typeof result.text === "string"
+        ? result.text
+        : (result.observations ?? [])
+            .map((item) => item.text ?? "")
+            .filter(Boolean)
+            .join("\n");
+    const state = classifyWeChatWindow(text);
+    const rows = visibleInboxRows(result);
+    return {
+      endpoint: "wechat",
+      healthy: state === "ready",
+      state,
+      windowReadable: true,
+      sessions: bindings.map((binding) => ({
+        sessionId: binding.id,
+        contactName: binding.contactName,
+        visibleInInbox: rows.some((row) =>
+          row.normalizedText.includes(normalize(binding.contactName)),
+        ),
+        lastProbeAt: binding.lastProbeAt ?? null,
+        lastCaptureAt: binding.lastCaptureAt ?? null,
+        pendingSend: Boolean(binding.pendingSend),
+      })),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    const state =
+      normalized.includes("permission") ||
+      normalized.includes("screen recording") ||
+      normalized.includes("accessibility")
+        ? "permission_missing"
+        : normalized.includes("window") || normalized.includes("not running")
+          ? "app_unavailable"
+          : normalized.includes("lock") || normalized.includes("session")
+            ? "gui_session_unavailable"
+            : "unreadable";
+    return {
+      endpoint: "wechat",
+      healthy: false,
+      state,
+      windowReadable: false,
+      error: message,
+      sessions: bindings.map((binding) => ({
+        sessionId: binding.id,
+        contactName: binding.contactName,
+        pendingSend: Boolean(binding.pendingSend),
+      })),
+    };
+  }
 }
 
 async function navigateToContact(
@@ -639,6 +903,7 @@ export async function sendWeChatSessionMessage(
     at: new Date().toISOString(),
     digest: messageDigest,
     text: message,
+    messageType: "text",
   };
   await writeWeChatSession(binding);
 
@@ -717,27 +982,251 @@ export async function sendWeChatSessionMessage(
       focused.value.parsed.latestIncomingText ||
       focused.value.parsed.latestText ||
       undefined;
+    const outgoing = focused.value.parsed.latestOutgoingText || "";
+    const verification =
+      outgoing &&
+      (normalize(outgoing).includes(normalize(message)) ||
+        normalize(message).includes(normalize(outgoing)))
+        ? "verified"
+        : "uncertain";
+
     binding.lastSendReceipt = {
       at: new Date().toISOString(),
       digest: messageDigest,
       turn: binding.turnCounter,
       contactName: binding.contactName,
       focusHeldMs: focused.focusHeldMs,
+      messageType: "text",
+      verification,
     };
     await writeWeChatSession(binding);
 
     return {
       sessionId: binding.id,
       endpoint: "wechat",
+      contactName: binding.contactName,
       sent: true,
       sameSession: true,
       messageDigest,
+      verification: binding.lastSendReceipt.verification ?? "uncertain",
       turn: binding.turnCounter,
       focusHeldMs: focused.focusHeldMs,
       receipt: binding.lastSendReceipt,
     };
   } catch (error) {
     // Keep pendingSend intact. The external side effect may be uncertain.
+    await writeWeChatSession(binding).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function sendWeChatSessionFile(
+  id: string,
+  filePath: string,
+  options?: {
+    confirm?: boolean;
+    allowDuplicate?: boolean;
+    deduplicateAsSuccess?: boolean;
+  },
+) {
+  if (options?.confirm !== true) {
+    throw new Error(
+      "WeChat session file send requires confirm=true because it sends an external attachment.",
+    );
+  }
+
+  const resolved = await assertAllowedExistingPath(filePath);
+  const stat = await fs.stat(resolved);
+  if (!stat.isFile()) throw new Error("WeChat attachment must be a regular file.");
+  const filename = path.basename(resolved);
+  const fileSha256 = await sha256File(resolved);
+  const messageDigest = digest("file:" + fileSha256);
+  const binding = await readWeChatSession(id);
+
+  if (binding.pendingSend) {
+    throw new Error(
+      `WeChat session ${binding.id} has an unresolved pending send from ${binding.pendingSend.at}.`,
+    );
+  }
+  if (
+    !options.allowDuplicate &&
+    binding.lastSendReceipt?.digest === messageDigest
+  ) {
+    if (options.deduplicateAsSuccess) {
+      return {
+        sessionId: binding.id,
+        endpoint: "wechat",
+        contactName: binding.contactName,
+        sent: true,
+        deduplicated: true,
+        messageType: "file",
+        filename,
+        fileSha256,
+        messageDigest,
+        turn: binding.turnCounter,
+        verification: binding.lastSendReceipt.verification ?? "uncertain",
+        receipt: binding.lastSendReceipt,
+      };
+    }
+    throw new Error(
+      "Duplicate WeChat attachment blocked by durable turn receipt.",
+    );
+  }
+
+  binding.pendingSend = {
+    at: new Date().toISOString(),
+    digest: messageDigest,
+    text: "[file] " + filename,
+    messageType: "file",
+    filename,
+    fileSha256,
+  };
+  await writeWeChatSession(binding);
+
+  try {
+    const focused = await withForegroundTransaction(
+      `wechat.session.send_file.${binding.id}`,
+      binding.restoreFocus,
+      async (held) => {
+        await navigateToContact(binding.contactName, held);
+        const before = await backgroundOcr(
+          binding.id,
+          binding.contactName,
+          binding.ocrLanguages,
+          held,
+        );
+        if (!before.parsed.contactVerified) {
+          throw new Error(
+            `WeChat active chat "${binding.contactName}" could not be verified before attachment send.`,
+          );
+        }
+
+        const clipboard = (await callPrimitive(
+          "clipboard",
+          "snapshot",
+          {},
+          held,
+        )) as { token?: string | null; fullFidelityRestore?: boolean };
+        if (!clipboard.fullFidelityRestore || !clipboard.token) {
+          throw new Error(
+            "WECHAT_FILE_CLIPBOARD_UNSAFE: existing clipboard could not be restored with full fidelity.",
+          );
+        }
+
+        try {
+          const bounds = (await callPrimitive(
+            "app.lifecycle",
+            "bounds",
+            { app_name: "com.tencent.xinWeChat" },
+            held,
+          )) as { x: number; y: number; width: number; height: number };
+          const inputX = Math.round(bounds.x + bounds.width * 0.72);
+          const inputY = Math.round(bounds.y + bounds.height * 0.84);
+          await callPrimitive(
+            "pointer.click",
+            "coordinate",
+            { x: inputX, y: inputY },
+            held,
+          );
+          await sleep(100);
+          await callPrimitive(
+            "clipboard",
+            "write_file",
+            { path: resolved },
+            held,
+          );
+          await callPrimitive(
+            "keyboard.press",
+            "key",
+            { key: "v", modifiers: ["command"] },
+            held,
+          );
+          await sleep(550);
+          const preview = await backgroundOcr(
+            binding.id,
+            binding.contactName,
+            binding.ocrLanguages,
+            held,
+          );
+          await callPrimitive(
+            "keyboard.press",
+            "key",
+            { key: "return" },
+            held,
+          );
+          await sleep(500);
+          const after = await backgroundOcr(
+            binding.id,
+            binding.contactName,
+            binding.ocrLanguages,
+            held,
+          );
+
+          const filenameSeen =
+            normalize(preview.parsed.visibleText).includes(normalize(filename)) ||
+            normalize(after.parsed.visibleText).includes(normalize(filename));
+          const conversationChanged =
+            Boolean(after.contentDigest) &&
+            after.contentDigest !== before.contentDigest;
+          return {
+            after,
+            filenameSeen,
+            conversationChanged,
+          };
+        } finally {
+          await callPrimitive(
+            "clipboard",
+            "restore",
+            { token: clipboard.token },
+            held,
+          ).catch(() => undefined);
+        }
+      },
+    );
+
+    binding.pendingSend = undefined;
+    binding.turnCounter += 1;
+    const afterDigest = focused.value.after.contentDigest;
+    if (afterDigest) {
+      binding.lastObservedDigest = afterDigest;
+      binding.lastDeliveredDigest = afterDigest;
+    }
+    binding.lastVisibleText =
+      focused.value.after.parsed.visibleText || undefined;
+    const verification =
+      focused.value.filenameSeen || focused.value.conversationChanged
+        ? "verified"
+        : "uncertain";
+    binding.lastSendReceipt = {
+      at: new Date().toISOString(),
+      digest: messageDigest,
+      turn: binding.turnCounter,
+      contactName: binding.contactName,
+      focusHeldMs: focused.focusHeldMs,
+      messageType: "file",
+      filename,
+      fileSha256,
+      verification,
+    };
+    await writeWeChatSession(binding);
+
+    return {
+      sessionId: binding.id,
+      endpoint: "wechat",
+      contactName: binding.contactName,
+      sent: true,
+      sameSession: true,
+      messageType: "file",
+      filename,
+      bytes: stat.size,
+      fileSha256,
+      messageDigest,
+      verification,
+      turn: binding.turnCounter,
+      focusHeldMs: focused.focusHeldMs,
+      receipt: binding.lastSendReceipt,
+    };
+  } catch (error) {
     await writeWeChatSession(binding).catch(() => undefined);
     throw error;
   }
@@ -765,6 +1254,10 @@ export async function resolvePendingWeChatSend(
       turn: binding.turnCounter,
       contactName: binding.contactName,
       focusHeldMs: 0,
+      messageType: pending.messageType ?? "text",
+      ...(pending.filename ? { filename: pending.filename } : {}),
+      ...(pending.fileSha256 ? { fileSha256: pending.fileSha256 } : {}),
+      verification: "uncertain",
     };
   }
   binding.pendingSend = undefined;
@@ -797,6 +1290,8 @@ export async function listPersistentWeChatSessions() {
       ? {
           at: binding.pendingSend.at,
           digest: binding.pendingSend.digest,
+          messageType: binding.pendingSend.messageType ?? "text",
+          filename: binding.pendingSend.filename ?? null,
         }
       : null,
     lastSendReceipt: binding.lastSendReceipt ?? null,
@@ -823,7 +1318,10 @@ export function weChatSessionAdapterContract() {
       "identify",
       "probe",
       "capture_latest",
+      "inbox_scan",
+      "health",
       "send",
+      "send_file",
       "resolve_pending",
       "list",
       "delete",
@@ -832,8 +1330,10 @@ export function weChatSessionAdapterContract() {
       backgroundProbe: "native window capture + Apple Vision OCR",
       foregroundOnlyWhen: [
         "bound contact is not the active WeChat conversation",
-        "sending an external message",
+        "sending an external message or attachment",
       ],
+      inboxScan: "background OCR heuristic over visible conversation rows",
+      fileSend: "clipboard file URL + foreground paste + post-send observation",
       focusRestore: true,
       defaultPollIntervalMs: 30_000,
     },
