@@ -63,6 +63,7 @@ import {
 import type { SessionAdapterId } from "../runtime/sessionStore.js";
 import {
   captureLatestSessionEndpoint,
+  sendFileSessionEndpoint,
   sendSessionEndpoint,
 } from "../runtime/sessionEndpoint.js";
 import { getRuntimeIdentity } from "../runtime/runtimeIdentity.js";
@@ -102,9 +103,11 @@ import {
 import {
   bindWeChatSession,
   deletePersistentWeChatSession,
+  getWeChatSessionHealth,
   identifyWeChatSession,
   listPersistentWeChatSessions,
   probeWeChatSession,
+  scanWeChatInbox,
   resolvePendingWeChatSend,
   weChatSessionAdapterContract,
 } from "../runtime/wechatSessionAdapter.js";
@@ -2104,7 +2107,7 @@ const skills: SkillDefinition[] = [
     contract: WECHAT_SESSION_CONTRACT,
     inputs: {
       op:
-        "contract | bind | identify | probe | capture_latest | send | resolve_pending | list | delete.",
+        "contract | bind | identify | probe | capture_latest | inbox_scan | health | send | send_file | resolve_pending | list | delete.",
       contact_name: "Exact WeChat contact name for bind.",
       label: "Optional human label for the persistent session.",
       restore_focus:
@@ -2117,6 +2120,7 @@ const skills: SkillDefinition[] = [
       allow_focus:
         "For capture_latest: permit a short foreground transaction if the bound contact is not currently active; default true.",
       message: "Message text for send.",
+      file_path: "Allowed local file path for send_file.",
       confirm:
         "Must be true for send because it creates an external WeChat message.",
       allow_duplicate:
@@ -2132,6 +2136,9 @@ const skills: SkillDefinition[] = [
       foregroundFallback: true,
       restorePreviousApp: args.restore_focus ?? true,
       crashSafePendingSend: true,
+      inboxScan: true,
+      attachmentSend: true,
+      healthProjection: true,
     }),
     run: async (args) => {
       const operation =
@@ -2164,6 +2171,12 @@ const skills: SkillDefinition[] = [
       if (operation === "probe") {
         return await probeWeChatSession(sessionId);
       }
+      if (operation === "inbox_scan") {
+        return await scanWeChatInbox();
+      }
+      if (operation === "health") {
+        return await getWeChatSessionHealth(sessionId);
+      }
       if (operation === "capture_latest") {
         return await captureLatestSessionEndpoint(sessionId, {
           allow_focus: optionalBoolean(args, "allow_focus", true),
@@ -2173,6 +2186,16 @@ const skills: SkillDefinition[] = [
         return await sendSessionEndpoint(
           sessionId,
           requiredText(args, "message"),
+          {
+            confirm: optionalBoolean(args, "confirm", false),
+            allow_duplicate: optionalBoolean(args, "allow_duplicate", false),
+          },
+        );
+      }
+      if (operation === "send_file") {
+        return await sendFileSessionEndpoint(
+          sessionId,
+          requiredText(args, "file_path"),
           {
             confirm: optionalBoolean(args, "confirm", false),
             allow_duplicate: optionalBoolean(args, "allow_duplicate", false),
@@ -2197,7 +2220,7 @@ const skills: SkillDefinition[] = [
       }
 
       throw new Error(
-        'wechat.session op must be "contract", "bind", "identify", "probe", "capture_latest", "send", "resolve_pending", "list", or "delete".',
+        'wechat.session op must be "contract", "bind", "identify", "probe", "capture_latest", "inbox_scan", "health", "send", "send_file", "resolve_pending", "list", or "delete".',
       );
     },
   },
