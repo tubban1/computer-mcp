@@ -42,6 +42,23 @@ const calls: Array<Record<string, unknown>> = [];
 globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
   const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
   calls.push(body);
+  if (body.action === "refresh_token") {
+    return new Response(JSON.stringify({
+      ok: true,
+      access_token: "rotated-device-token-secret",
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString(),
+      device: {
+        id: "device-test",
+        device_name: "test-mac",
+        platform: "darwin-arm64",
+        status: "active",
+      },
+      grants: {
+        capabilities: ["computer.control", "cloud.sync"],
+        scopes: {},
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   if (body.action === "authorize") {
     return new Response(JSON.stringify({
       ok: true,
@@ -74,6 +91,13 @@ status = await cloud.getCloudAuthorizationStatus({ force: true });
 assert.equal(status.authorized, true);
 assert.equal(status.deviceId, "device-test");
 assert.equal((status as unknown as Record<string, unknown>).accessToken, undefined);
+assert.ok(calls.some((call) => call.action === "refresh_token"));
+const rotated = JSON.parse(await fs.readFile(credentialPath, "utf8")) as {
+  accessToken: string;
+  expiresAt: string;
+};
+assert.equal(rotated.accessToken, "rotated-device-token-secret");
+assert.ok(Date.parse(rotated.expiresAt) > Date.now() + 20 * 24 * 60 * 60_000);
 await cloud.assertCloudAuthorized();
 
 await cloud.appendCloudMessage({
@@ -109,6 +133,7 @@ console.log(JSON.stringify({
   deviceCodeCredentialBoundary: true,
   opaqueTokenNeverReturnedByStatus: true,
   cloudGrantRequiredForControl: true,
+  deviceTokenRotatesBeforeExpiry: true,
   communicationSyncUsesIdempotencyKey: true,
   revocationFailsClosed: true,
 }, null, 2));
