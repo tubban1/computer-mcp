@@ -53,16 +53,18 @@ import {
 import type { PersistentTaskStatus } from "../tasks/taskStore.js";
 import {
   bindBrowserAgentSession,
-  captureLatestAgentReply,
   getSessionAdapterContract,
   identifyBrowserAgentSession,
   listBrowserAgentSessions,
   rebindBrowserAgentSession,
   removeBrowserAgentSession,
   resolvePendingSessionSend,
-  sendAgentMessage,
 } from "../runtime/sessionAdapters.js";
 import type { SessionAdapterId } from "../runtime/sessionStore.js";
+import {
+  captureLatestSessionEndpoint,
+  sendSessionEndpoint,
+} from "../runtime/sessionEndpoint.js";
 import { getRuntimeIdentity } from "../runtime/runtimeIdentity.js";
 import { runtimeLifecycle } from "../runtime/runtimeLifecycle.js";
 import {
@@ -99,13 +101,11 @@ import {
 } from "../runtime/workspaceHandoffStore.js";
 import {
   bindWeChatSession,
-  captureLatestWeChatReply,
   deletePersistentWeChatSession,
   identifyWeChatSession,
   listPersistentWeChatSessions,
   probeWeChatSession,
   resolvePendingWeChatSend,
-  sendWeChatSessionMessage,
   weChatSessionAdapterContract,
 } from "../runtime/wechatSessionAdapter.js";
 
@@ -1643,17 +1643,21 @@ const skills: SkillDefinition[] = [
       }
 
       if (operation === "capture_latest") {
-        return await captureLatestAgentReply(sessionId, {
-          maxChars:
+        return await captureLatestSessionEndpoint(sessionId, {
+          max_chars:
             typeof args.max_chars === "number" ? args.max_chars : undefined,
         });
       }
 
       if (operation === "send") {
-        return await sendAgentMessage(sessionId, requiredText(args, "text"), {
-          confirm: optionalBoolean(args, "confirm", false),
-          allowDuplicate: optionalBoolean(args, "allow_duplicate", false),
-        });
+        return await sendSessionEndpoint(
+          sessionId,
+          requiredText(args, "text"),
+          {
+            confirm: optionalBoolean(args, "confirm", false),
+            allow_duplicate: optionalBoolean(args, "allow_duplicate", false),
+          },
+        );
       }
 
       if (operation === "resolve_pending") {
@@ -2161,17 +2165,17 @@ const skills: SkillDefinition[] = [
         return await probeWeChatSession(sessionId);
       }
       if (operation === "capture_latest") {
-        return await captureLatestWeChatReply(sessionId, {
-          allowFocus: optionalBoolean(args, "allow_focus", true),
+        return await captureLatestSessionEndpoint(sessionId, {
+          allow_focus: optionalBoolean(args, "allow_focus", true),
         });
       }
       if (operation === "send") {
-        return await sendWeChatSessionMessage(
+        return await sendSessionEndpoint(
           sessionId,
           requiredText(args, "message"),
           {
             confirm: optionalBoolean(args, "confirm", false),
-            allowDuplicate: optionalBoolean(args, "allow_duplicate", false),
+            allow_duplicate: optionalBoolean(args, "allow_duplicate", false),
           },
         );
       }
