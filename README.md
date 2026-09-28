@@ -22,11 +22,13 @@ Concurrency & durable ownership: [`docs/architecture/concurrency-and-ownership.m
 
 Production Runtime: [`docs/operations/production-runtime.md`](docs/operations/production-runtime.md)
 
+Cloud account & device authorization: [`docs/operations/cloud-account-and-device-auth.md`](docs/operations/cloud-account-and-device-auth.md)
+
 Multi-agent soak testing: [`docs/operations/soak-testing.md`](docs/operations/soak-testing.md)
 
 ### Running Jarvis
 
-For a new user, run `npm run setup`. It checks or installs the first Production Runtime, configures Secure MCP Tunnel, prepares the background tunnel service, copies the Tunnel ID, and opens ChatGPT for the final user-authorized Plugin connection. See [`docs/operations/chatgpt-onboarding.md`](docs/operations/chatgpt-onboarding.md).
+For a new user, run `npm run setup`. It checks or installs the first Production Runtime, configures Secure MCP Tunnel, prepares the background tunnel service, copies the Tunnel ID, and opens ChatGPT for the final user-authorized Plugin connection. The cloud-control branch additionally supports `npm run cloud:login` to bind this computer to an OWL cloud account before cloud authorization is enabled. See [`docs/operations/chatgpt-onboarding.md`](docs/operations/chatgpt-onboarding.md).
 
 For normal daily use after onboarding, launchd starts Jarvis automatically. For later verified releases, use the explicit `npm run promote:production` boundary so the new candidate is preflighted and the old Runtime is gracefully drained before cutover. Do **not** run `npm run dev` for normal use. `npm run dev` is only for AgentOS source development and defaults to port `8788` with `~/.computer-mcp-dev`, while Production normally uses port `8787` with `~/.computer-mcp`.
 
