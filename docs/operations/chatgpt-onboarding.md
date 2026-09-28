@@ -13,12 +13,13 @@ npm run setup
 1. Checks the existing Computer MCP Production Runtime.
 2. Reuses a healthy installed Production release without upgrading or replacing it.
 3. If Production has never been installed, asks before performing the first install.
-4. Checks Secure MCP Tunnel configuration and runs the interactive tunnel setup only when values are missing.
-5. Reuses an already-running tunnel client without interruption.
-6. On a fresh machine, prepares and starts a separate launchd-managed tunnel service.
-7. Copies the saved Tunnel ID to the macOS clipboard when `pbcopy` is available.
-8. Opens ChatGPT web and prints the minimal handoff instructions.
-9. Writes a local onboarding receipt without credentials or the Tunnel ID.
+4. If the selected Production profile requires cloud authorization, checks the OWL account device grant and launches the visible device-code approval flow when needed.
+5. Checks Secure MCP Tunnel configuration and runs the interactive tunnel setup only when values are missing.
+6. Reuses an already-running tunnel client without interruption.
+7. On a fresh machine, prepares and starts a separate launchd-managed tunnel service.
+8. Copies the saved Tunnel ID to the macOS clipboard when `pbcopy` is available.
+9. Opens ChatGPT web and prints the minimal handoff instructions.
+10. Writes a local onboarding receipt without credentials or the Tunnel ID.
 
 The onboarding receipt is stored at:
 
@@ -61,6 +62,18 @@ Onboarding is not a production-upgrade mechanism.
 - An installed-but-unhealthy Production release causes onboarding to stop with a diagnostic instruction.
 - Promotion to a newer release still requires the explicit `npm run promote:production` boundary.
 - Tunnel lifecycle is independent from Runtime promotion and Native Helper lifecycle.
+
+## OWL account authorization
+
+Cloud authorization is intentionally separate from the ChatGPT Plugin/Tunnel connection. When the Production profile sets:
+
+```text
+AGENTOS_CLOUD_AUTH_REQUIRED=true
+```
+
+onboarding runs `cloud:status`. If the computer is not already authorized, it runs the device-code flow, opens the configured OWL Worker approval page, and waits for the signed-in user to approve this installation. The opaque device token is stored locally with mode `0600`; only its hash is persisted by the cloud.
+
+This cloud grant can revoke Computer MCP work but cannot grant missing macOS permissions or enable disabled local capabilities. See [Cloud account and device authorization](cloud-account-and-device-auth.md).
 
 ## Security properties
 
