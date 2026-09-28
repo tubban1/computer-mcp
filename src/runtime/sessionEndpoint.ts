@@ -8,6 +8,7 @@ import {
   captureLatestWeChatReply,
   identifyWeChatSession,
   probeWeChatSession,
+  sendWeChatSessionFile,
   sendWeChatSessionMessage,
 } from "./wechatSessionAdapter.js";
 
@@ -15,7 +16,8 @@ export type SessionEndpointOperation =
   | "identify"
   | "probe"
   | "capture_latest"
-  | "send";
+  | "send"
+  | "send_file";
 
 export function sessionEndpointKind(
   bindingId: string,
@@ -152,7 +154,7 @@ export async function sendSessionEndpoint(
           ? [bindingId, "outgoing", String(turn ?? "na"), digest].join(":")
           : undefined,
       receipt: {
-        status: "sent",
+        status: row.verification === "uncertain" ? "uncertain" : "sent",
         providerRef:
           typeof row.sessionId === "string"
             ? row.sessionId
@@ -160,6 +162,75 @@ export async function sendSessionEndpoint(
         evidence: {
           turn: turn ?? null,
           deduplicated: row.deduplicated === true,
+        },
+      },
+    });
+  }
+
+  return sent;
+}
+
+export async function sendFileSessionEndpoint(
+  bindingId: string,
+  filePath: string,
+  args?: Record<string, unknown>,
+) {
+  const kind = sessionEndpointKind(bindingId);
+  if (kind !== "wechat") {
+    throw new Error(
+      "SESSION_ATTACHMENT_UNSUPPORTED: this Session Endpoint does not support file attachments.",
+    );
+  }
+
+  const sent = await sendWeChatSessionFile(bindingId, filePath, {
+    confirm: args?.confirm === true,
+    allowDuplicate: args?.allow_duplicate === true,
+    deduplicateAsSuccess: true,
+  });
+  const row = sent as Record<string, unknown>;
+  if (row.sent === true) {
+    const digest =
+      typeof row.messageDigest === "string" ? row.messageDigest : undefined;
+    const turn = typeof row.turn === "number" ? row.turn : undefined;
+    const filename =
+      typeof row.filename === "string" ? row.filename : "attachment";
+    const fileSha256 =
+      typeof row.fileSha256 === "string" ? row.fileSha256 : undefined;
+    const verification =
+      row.verification === "verified" ? "verified" : "uncertain";
+
+    await appendCloudMessage({
+      channelType: "wechat",
+      externalRef: bindingId,
+      title:
+        typeof row.contactName === "string"
+          ? row.contactName
+          : bindingId,
+      direction: "outgoing",
+      messageType: "file",
+      text: filename,
+      content: {
+        endpoint: kind,
+        sessionId: bindingId,
+        turn: turn ?? null,
+        filename,
+        fileSha256: fileSha256 ?? null,
+        bytes: typeof row.bytes === "number" ? row.bytes : null,
+        verification,
+        deduplicated: row.deduplicated === true,
+      },
+      idempotencyKey:
+        digest
+          ? [bindingId, "outgoing-file", String(turn ?? "na"), digest].join(":")
+          : undefined,
+      receipt: {
+        status: verification === "verified" ? "sent" : "uncertain",
+        providerRef: bindingId,
+        evidence: {
+          turn: turn ?? null,
+          filename,
+          fileSha256: fileSha256 ?? null,
+          verification,
         },
       },
     });
