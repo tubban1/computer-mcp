@@ -888,8 +888,12 @@ export async function sendWeChatSessionMessage(
       return {
         sessionId: binding.id,
         endpoint: "wechat",
+        contactName: binding.contactName,
         sent: true,
         deduplicated: true,
+        messageType: "text",
+        messageDigest,
+        verification: binding.lastSendReceipt.verification ?? "uncertain",
         turn: binding.turnCounter,
         receipt: binding.lastSendReceipt,
       };
@@ -1193,8 +1197,12 @@ export async function sendWeChatSessionFile(
     }
     binding.lastVisibleText =
       focused.value.after.parsed.visibleText || undefined;
+    // A changed conversation proves only that *something* changed after the
+    // paste/send transaction. It is useful evidence, but it is not strong
+    // enough to prove that this exact attachment was sent. Only OCR evidence
+    // for the requested filename upgrades the receipt to verified.
     const verification =
-      focused.value.filenameSeen || focused.value.conversationChanged
+      focused.value.filenameSeen
         ? "verified"
         : "uncertain";
     binding.lastSendReceipt = {
@@ -1265,9 +1273,18 @@ export async function resolvePendingWeChatSend(
 
   return {
     sessionId: id,
+    endpoint: "wechat",
+    contactName: binding.contactName,
     resolved: true,
     resolution,
     turn: binding.turnCounter,
+    pending: {
+      digest: pending.digest,
+      text: pending.text,
+      messageType: pending.messageType ?? "text",
+      filename: pending.filename ?? null,
+      fileSha256: pending.fileSha256 ?? null,
+    },
     receipt: binding.lastSendReceipt ?? null,
   };
 }
