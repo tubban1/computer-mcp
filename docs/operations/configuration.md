@@ -70,6 +70,34 @@ npm run tunnel:run
 
 The API key is stored outside Git in a mode `0600` secret file and passed to `tunnel-client-runtime` by `file:` reference, not as a command-line credential. See [Tunnel client setup](tunnel-client.md).
 
+## Cloud account and device authorization
+
+Computer MCP can be paired with an OWL cloud account through a one-time device-code flow.
+
+```text
+AGENTOS_CLOUD_URL=https://psnxgftfywpzriseetjg.supabase.co
+AGENTOS_CLOUD_APP_URL=http://localhost:3000
+AGENTOS_CLOUD_AUTH_REQUIRED=false
+AGENTOS_CLOUD_SYNC=false
+AGENTOS_CLOUD_SYNC_REQUIRED=false
+AGENTOS_CLOUD_AUTH_CACHE_MS=30000
+```
+
+Use:
+
+```bash
+npm run cloud:login
+npm run cloud:status
+npm run cloud:heartbeat
+npm run cloud:logout
+```
+
+`AGENTOS_CLOUD_AUTH_REQUIRED=true` makes an active account-owned device grant a prerequisite for MCP tool calls. This is an additional authorization boundary only: local `ALLOW_*` capability gates, Runtime approval policy, and macOS TCC permissions still apply.
+
+`AGENTOS_CLOUD_SYNC=true` mirrors durable Session Endpoint communication into the account cloud store. With `AGENTOS_CLOUD_SYNC_REQUIRED=true`, communication completion fails closed if its cloud record cannot be committed.
+
+See [Cloud account and device authorization](cloud-account-and-device-auth.md).
+
 ## Browser startup
 
 Chrome startup can vary significantly by macOS/Chrome version and machine load. The Runtime waits up to 60 seconds for the local DevTools endpoint by default. Override with:
