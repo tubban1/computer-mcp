@@ -77,7 +77,8 @@
     "cloud:login": "node scripts/cloud-device.mjs login",
     "cloud:status": "node scripts/cloud-device.mjs status",
     "cloud:heartbeat": "node scripts/cloud-device.mjs heartbeat",
-    "cloud:logout": "node scripts/cloud-device.mjs logout"
+    "cloud:logout": "node scripts/cloud-device.mjs logout",
+    "verify:cloud-auth": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-cloud-device-auth.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
