@@ -2342,10 +2342,27 @@ app.all("/mcp", async (req, res) => {
     }
   } catch (error) {
     if (!res.headersSent) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      res
+        .status(message.startsWith("CLOUD_AUTH_REQUIRED:") ? 403 : 500)
+        .json({ error: message });
     }
   }
 });
+
+async function publicCloudHealth() {
+  const status = await getCloudAuthorizationStatus();
+  return {
+    enabled: status.enabled,
+    required: status.required,
+    syncEnabled: status.syncEnabled,
+    loggedIn: status.loggedIn,
+    authorized: status.authorized,
+    capabilities: status.capabilities,
+    expiresAt: status.expiresAt ?? null,
+    reason: status.reason ?? null,
+  };
+}
 
 function runtimeHealthLifecycle() {
   const lifecycle = runtimeLifecycle.status();
@@ -2364,7 +2381,7 @@ app.get("/health", async (_req, res) => {
     contracts: AGENTOS_RUNTIME_CONTRACTS,
     runtimeClient: getRuntimeClientStatus(),
     performance: mcpPerformanceSnapshot(),
-    cloud: await getCloudAuthorizationStatus(),
+    cloud: await publicCloudHealth(),
     runtime: {
       ...runtimePathStatus(),
       sessions: {
