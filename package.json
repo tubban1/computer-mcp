@@ -73,7 +73,11 @@
     "verify:macos-filesystem-access": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-filesystem-access.ts",
     "package:macos": "zsh scripts/build-macos-distribution.sh",
     "verify:macos-distribution": "zsh scripts/verify-macos-distribution.sh",
-    "verify:macos-protected-path-live": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-protected-path-live.ts"
+    "verify:macos-protected-path-live": "AGENTOS_RUNTIME_MODE=test tsx scripts/verify-macos-protected-path-live.ts",
+    "cloud:login": "node scripts/cloud-device.mjs login",
+    "cloud:status": "node scripts/cloud-device.mjs status",
+    "cloud:heartbeat": "node scripts/cloud-device.mjs heartbeat",
+    "cloud:logout": "node scripts/cloud-device.mjs logout"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
