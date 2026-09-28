@@ -1,6 +1,7 @@
 import {
   captureLatestAgentReply,
   identifyBrowserAgentSession,
+  resolvePendingSessionSend,
   sendAgentMessage,
 } from "./sessionAdapters.js";
 import { appendCloudMessage } from "../cloud/cloudDevice.js";
@@ -8,6 +9,7 @@ import {
   captureLatestWeChatReply,
   identifyWeChatSession,
   probeWeChatSession,
+  resolvePendingWeChatSend,
   sendWeChatSessionFile,
   sendWeChatSessionMessage,
 } from "./wechatSessionAdapter.js";
@@ -17,7 +19,8 @@ export type SessionEndpointOperation =
   | "probe"
   | "capture_latest"
   | "send"
-  | "send_file";
+  | "send_file"
+  | "resolve_pending";
 
 export function sessionEndpointKind(
   bindingId: string,
@@ -237,4 +240,82 @@ export async function sendFileSessionEndpoint(
   }
 
   return sent;
+}
+
+
+export async function resolvePendingSessionEndpoint(
+  bindingId: string,
+  resolution: "sent" | "not_sent",
+) {
+  const kind = sessionEndpointKind(bindingId);
+  const resolved = kind === "wechat"
+    ? await resolvePendingWeChatSend(bindingId, resolution)
+    : await resolvePendingSessionSend(bindingId, resolution);
+
+  const row = resolved as Record<string, unknown>;
+  if (row.resolved === true && row.resolution === "sent") {
+    const pending =
+      row.pending && typeof row.pending === "object"
+        ? (row.pending as Record<string, unknown>)
+        : {};
+    const digest =
+      typeof pending.digest === "string" ? pending.digest : undefined;
+    const text =
+      typeof pending.text === "string" ? pending.text : "";
+    const turn =
+      typeof row.turn === "number" ? row.turn : undefined;
+    const messageType =
+      typeof pending.messageType === "string"
+        ? pending.messageType
+        : "text";
+    const filename =
+      typeof pending.filename === "string" ? pending.filename : undefined;
+    const fileSha256 =
+      typeof pending.fileSha256 === "string" ? pending.fileSha256 : undefined;
+
+    await appendCloudMessage({
+      channelType: kind === "wechat" ? "wechat" : "browser-agent",
+      externalRef: bindingId,
+      title:
+        typeof row.contactName === "string"
+          ? row.contactName
+          : typeof row.adapterId === "string"
+            ? row.adapterId
+            : bindingId,
+      direction: "outgoing",
+      messageType,
+      text: messageType === "file" ? filename ?? text : text,
+      content: {
+        endpoint: kind,
+        sessionId: bindingId,
+        turn: turn ?? null,
+        recoveredFromPendingSend: true,
+        resolution: "sent",
+        ...(filename ? { filename } : {}),
+        ...(fileSha256 ? { fileSha256 } : {}),
+      },
+      idempotencyKey:
+        digest
+          ? [
+              bindingId,
+              messageType === "file" ? "outgoing-file" : "outgoing",
+              String(turn ?? "na"),
+              digest,
+            ].join(":")
+          : undefined,
+      receipt: {
+        status: "uncertain",
+        providerRef: bindingId,
+        evidence: {
+          recoveredFromPendingSend: true,
+          operatorResolution: "sent",
+          turn: turn ?? null,
+          ...(filename ? { filename } : {}),
+          ...(fileSha256 ? { fileSha256 } : {}),
+        },
+      },
+    });
+  }
+
+  return resolved;
 }
