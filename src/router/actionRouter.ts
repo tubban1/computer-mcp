@@ -652,6 +652,13 @@ const actions = {
     destructive: true,
     run: ({ text }: any) => desktopProvider.clipboardWrite(text),
   },
+  "desktop.clipboard_write_file": {
+    provider: "desktop",
+    description: "Place an allowed local file on the macOS clipboard as a file URL.",
+    schema: z.object({ path: z.string().min(1) }),
+    destructive: true,
+    run: ({ path }: any) => desktopProvider.clipboardWriteFile(path),
+  },
   "desktop.clipboard_info": {
     provider: "desktop",
     description: "Read macOS clipboard metadata and change counter without returning clipboard content.",
