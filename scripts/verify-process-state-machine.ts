@@ -106,6 +106,44 @@ for (let round = 1; round <= 5; round += 1) {
   assert.equal((finalObservation.data as any).exitCode, 0);
 }
 
+const authFailureScript =
+  "console.error('HTTP 403 forbidden: invalid token'); process.exit(2);";
+const authFailure = await startProcess(
+  `${JSON.stringify(process.execPath)} -e ${JSON.stringify(authFailureScript)}`,
+  root,
+  "read",
+);
+const authFailureResult = await waitForProcessState(authFailure.processId, {
+  states: ["failed"],
+  timeoutMs: 10_000,
+  pollMs: 100,
+});
+assert.equal(authFailureResult.matched, true);
+assert.equal((authFailureResult.observation.data as any).outcomeClass, "auth");
+assert.equal((authFailureResult.observation.data as any).failureCategory, "auth");
+
+const expectedStopScript =
+  "setTimeout(() => process.kill(process.pid, 'SIGTERM'), 20); setInterval(() => {}, 1000);";
+const expectedStop = await startProcess(
+  `${JSON.stringify(process.execPath)} -e ${JSON.stringify(expectedStopScript)}`,
+  root,
+  "read",
+);
+const expectedStopResult = await waitForProcessState(expectedStop.processId, {
+  states: ["failed"],
+  timeoutMs: 10_000,
+  pollMs: 100,
+});
+assert.equal(expectedStopResult.matched, true);
+assert.equal(
+  (expectedStopResult.observation.data as any).outcomeClass,
+  "expected_termination",
+);
+assert.equal(
+  (expectedStopResult.observation.data as any).failureCategory,
+  "cancelled",
+);
+
 const manifest = getProcessStateMachineManifest();
 assert.ok(manifest.states.includes("waiting_input"));
 assert.ok(manifest.durableRecordCompatibility.includes("exited"));

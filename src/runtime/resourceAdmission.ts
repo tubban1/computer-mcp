@@ -1,4 +1,5 @@
 import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 export type AdmissionMode =
@@ -83,6 +84,54 @@ export type ShellAdmissionBudget = {
 type EventLoopUtilization = ReturnType<typeof performance.eventLoopUtilization>;
 
 let previousElu: EventLoopUtilization | undefined;
+let darwinMemoryCache: { at: number; availableBytes: number } | null = null;
+
+export function parseDarwinVmStatAvailableBytes(output: string): number | null {
+  const pageSizeMatch = /page size of\s+(\d+)\s+bytes/i.exec(output);
+  const pageSize = Number(pageSizeMatch?.[1]);
+  if (!Number.isFinite(pageSize) || pageSize <= 0) return null;
+
+  const values = new Map<string, number>();
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^([^:]+):\s+([\d.]+)\.?\s*$/.exec(line.trim());
+    if (!match) continue;
+    values.set(match[1]!.trim().toLowerCase(), Number(match[2]));
+  }
+
+  // Keep this conservative: purgeable pages may overlap other accounting
+  // classes, so count only clearly reclaimable/free VM buckets.
+  const reclaimablePages = [
+    "pages free",
+    "pages inactive",
+    "pages speculative",
+  ].reduce((sum, key) => sum + Math.max(0, values.get(key) ?? 0), 0);
+  if (!Number.isFinite(reclaimablePages) || reclaimablePages <= 0) return null;
+  return reclaimablePages * pageSize;
+}
+
+function hostAvailableMemoryBytes(): number {
+  const fallback = os.freemem();
+  if (process.platform !== "darwin") return fallback;
+  const now = Date.now();
+  if (darwinMemoryCache && now - darwinMemoryCache.at < 2_000) {
+    return Math.max(fallback, darwinMemoryCache.availableBytes);
+  }
+  try {
+    const output = execFileSync("/usr/bin/vm_stat", [], {
+      encoding: "utf8",
+      timeout: 750,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const availableBytes = parseDarwinVmStatAvailableBytes(output);
+    if (availableBytes !== null) {
+      darwinMemoryCache = { at: now, availableBytes };
+      return Math.max(fallback, availableBytes);
+    }
+  } catch {
+    // Fall back to os.freemem() if vm_stat is unavailable.
+  }
+  return fallback;
+}
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
@@ -224,7 +273,7 @@ export function detectHostResourceInventory(
       ? Math.trunc(testParallelism)
       : detectedParallelism;
   const totalMemory = os.totalmem();
-  const freeMemory = os.freemem();
+  const freeMemory = hostAvailableMemoryBytes();
   const cpuLoadPerParallelism =
     availableParallelism > 0
       ? Math.max(os.loadavg()[0] ?? 0, 0) / availableParallelism

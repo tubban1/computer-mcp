@@ -2213,7 +2213,10 @@ app.all("/mcp", async (req, res) => {
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id): void => {
           sessions.set(id, { transport, server });
-          runtimeSessionManager.register(id);
+          runtimeSessionManager.register(id, {
+            kind: "transient",
+            ownerSource: "mcp-transport",
+          });
         },
       });
       transport.onclose = () => {
@@ -2251,6 +2254,8 @@ app.all("/mcp", async (req, res) => {
         `mcp:bootstrap:${randomUUID()}`;
       const requestId = randomUUID();
       runtimeSessionManager.beginCall(effectiveSessionId, {
+        kind: "transient",
+        ownerSource: "mcp-transport",
         userAgent:
           typeof req.headers["user-agent"] === "string"
             ? req.headers["user-agent"]

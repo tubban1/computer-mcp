@@ -16,6 +16,19 @@ export type ManagedProcessStatus =
   | "lost"
   | "terminating";
 
+export type ManagedProcessOutcomeClass =
+  | "running"
+  | "success"
+  | "expected_termination"
+  | "resource_pressure"
+  | "auth"
+  | "network"
+  | "external_service"
+  | "provider"
+  | "workload_failure"
+  | "runtime_failure"
+  | "unknown";
+
 export type ManagedProcessRecord = {
   version: 1;
   processId: string;
@@ -34,6 +47,9 @@ export type ManagedProcessRecord = {
   status: ManagedProcessStatus;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
+  outcomeClass?: ManagedProcessOutcomeClass;
+  failureCategory?: string | null;
+  failureReason?: string | null;
   runtimeInstanceId: string;
   stdoutPath: string;
   stderrPath: string;

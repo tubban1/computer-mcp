@@ -94,7 +94,8 @@
     "verify:soak-regressions": "npm run verify:soak-contention-regression && npm run verify:browser-startup-regression",
     "verify:mcp-session-reconnect": "OWL_RUNTIME_MODE=test tsx scripts/verify-mcp-session-reconnect.ts",
     "verify:shell-concurrency-cap": "OWL_RUNTIME_MODE=test tsx scripts/verify-shell-concurrency-cap.ts",
-    "verify:resource-admission": "OWL_RUNTIME_MODE=test tsx scripts/verify-resource-admission.ts"
+    "verify:resource-admission": "OWL_RUNTIME_MODE=test tsx scripts/verify-resource-admission.ts",
+    "verify:runtime-session-lifecycle": "OWL_RUNTIME_MODE=test tsx scripts/verify-runtime-session-lifecycle.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

@@ -143,6 +143,129 @@ async function ensureLogFile(filePath: string) {
   await handle.close();
 }
 
+async function readClassificationTail(filePath: string): Promise<string> {
+  try {
+    const stat = await fs.stat(filePath);
+    const byteCount = Math.min(stat.size, 8_192);
+    if (byteCount <= 0) return "";
+    const handle = await fs.open(filePath, "r");
+    try {
+      const buffer = Buffer.alloc(byteCount);
+      await handle.read(buffer, 0, byteCount, Math.max(0, stat.size - byteCount));
+      return buffer.toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return "";
+  }
+}
+
+function classifyManagedProcessOutcome(input: {
+  command: string;
+  status: ManagedProcessRecord["status"];
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  text?: string;
+}) {
+  if (input.status === "running" || input.status === "terminating") {
+    return {
+      outcomeClass: "running" as const,
+      failureCategory: null,
+      failureReason: null,
+    };
+  }
+  if (input.status === "lost") {
+    return {
+      outcomeClass: "runtime_failure" as const,
+      failureCategory: "runtime",
+      failureReason: "Managed process ownership was lost before a terminal exit could be proven.",
+    };
+  }
+  if (input.exitCode === 0) {
+    return {
+      outcomeClass: "success" as const,
+      failureCategory: null,
+      failureReason: null,
+    };
+  }
+  if (
+    ["SIGTERM", "SIGINT", "SIGHUP"].includes(input.signal ?? "") ||
+    [130, 143].includes(Number(input.exitCode))
+  ) {
+    return {
+      outcomeClass: "expected_termination" as const,
+      failureCategory: "cancelled",
+      failureReason: "Process stopped by an expected termination signal.",
+    };
+  }
+
+  const haystack = `${input.command}\n${input.text ?? ""}`.toLowerCase();
+  const match = (pattern: RegExp) => pattern.test(haystack);
+
+  if (match(/resource_wait_timeout|capacity_busy|\benomem\b|out of memory|no space left|\benospc\b|resource temporarily unavailable/)) {
+    return {
+      outcomeClass: "resource_pressure" as const,
+      failureCategory: "resource_pressure",
+      failureReason: "Process failed under local resource or admission pressure.",
+    };
+  }
+  if (match(/\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid token|authentication failed|credentials? (?:missing|invalid)|permission denied/)) {
+    return {
+      outcomeClass: "auth" as const,
+      failureCategory: "auth",
+      failureReason: "External authentication or authorization failed.",
+    };
+  }
+  if (match(/ssl|tls|econnreset|econnrefused|etimedout|enotfound|socket hang up|network error|registry_timeout|handshake failure/)) {
+    return {
+      outcomeClass: "network" as const,
+      failureCategory: "network",
+      failureReason: "Network or transport communication failed.",
+    };
+  }
+  if (match(/cloudflare|workers\.dev|\bneon\b|\bvercel\b|\bsupabase\b|\bgithub\b|\baws\b|npm registry|registry\.npmjs\.org/)) {
+    return {
+      outcomeClass: "external_service" as const,
+      failureCategory: "external_service",
+      failureReason: "An external service or deployment provider reported the failure.",
+    };
+  }
+  if (match(/playwright|puppeteer|chromium|browser exited|provider unavailable|provider failed/)) {
+    return {
+      outcomeClass: "provider" as const,
+      failureCategory: "provider",
+      failureReason: "An execution provider reported the failure.",
+    };
+  }
+  return {
+    outcomeClass: "workload_failure" as const,
+    failureCategory: "workload",
+    failureReason: "The workload exited unsuccessfully; OWL Runtime remained available.",
+  };
+}
+
+async function persistProcessOutcome(
+  record: ManagedProcessRecord,
+  exitCode: number | null,
+  signal: NodeJS.Signals | null,
+) {
+  const [stdout, stderr] = await Promise.all([
+    readClassificationTail(record.stdoutPath),
+    readClassificationTail(record.stderrPath),
+  ]);
+  const outcome = classifyManagedProcessOutcome({
+    command: record.command,
+    status: record.status,
+    exitCode,
+    signal,
+    text: `${stdout}\n${stderr}`,
+  });
+  record.outcomeClass = outcome.outcomeClass;
+  record.failureCategory = outcome.failureCategory;
+  record.failureReason = outcome.failureReason;
+}
+
 async function markExited(
   processId: string,
   exitCode: number | null,
@@ -154,6 +277,7 @@ async function markExited(
     record.exitCode = exitCode;
     record.signal = signal;
     record.inputAvailable = false;
+    await persistProcessOutcome(record, exitCode, signal);
     await writeManagedProcess(record);
   } finally {
     liveChildren.delete(processId);
@@ -182,6 +306,11 @@ async function reconcileRecord(
       record.exitCode = live.exitCode;
       record.signal = live.signalCode as NodeJS.Signals | null;
       record.inputAvailable = false;
+      await persistProcessOutcome(
+        record,
+        live.exitCode,
+        live.signalCode as NodeJS.Signals | null,
+      );
       await writeManagedProcess(record);
       liveChildren.delete(record.processId);
       releaseShellConcurrencyPermit(`managed:${record.processId}`);
@@ -227,6 +356,15 @@ async function reconcileRecord(
   latest.status = "lost";
   latest.inputAvailable = false;
   latest.exitCode = latest.exitCode ?? null;
+  const lostOutcome = classifyManagedProcessOutcome({
+    command: latest.command,
+    status: "lost",
+    exitCode: latest.exitCode,
+    signal: latest.signal ?? null,
+  });
+  latest.outcomeClass = lostOutcome.outcomeClass;
+  latest.failureCategory = lostOutcome.failureCategory;
+  latest.failureReason = lostOutcome.failureReason;
   await writeManagedProcess(latest);
   releaseShellConcurrencyPermit(`managed:${latest.processId}`);
   await unpinWorkspaceLeaseForProcess(latest.processId).catch(
@@ -443,6 +581,9 @@ export async function startProcess(
       startedAt: now,
       updatedAt: now,
       status: "running",
+      outcomeClass: "running",
+      failureCategory: null,
+      failureReason: null,
       runtimeInstanceId,
       stdoutPath: logs.stdoutPath,
       stderrPath: logs.stderrPath,
@@ -569,6 +710,18 @@ export async function listProcesses(options: {
     running: record.status === "running" || record.status === "terminating",
     status: record.status,
     exitCode: record.exitCode ?? null,
+    signal: record.signal ?? null,
+    outcomeClass:
+      record.outcomeClass ??
+      (record.status === "running" || record.status === "terminating"
+        ? "running"
+        : record.status === "lost"
+          ? "runtime_failure"
+          : record.exitCode === 0
+            ? "success"
+            : "unknown"),
+    failureCategory: record.failureCategory ?? null,
+    failureReason: record.failureReason ?? null,
     recoveredAfterRestart: record.recoveredAfterRestart ?? false,
     inputAvailable:
       record.inputAvailable && liveChildren.has(record.processId),
@@ -688,6 +841,9 @@ export async function observeProcess(
       reason: assessment.reason,
       exitCode: record.exitCode ?? null,
       signal: record.signal ?? null,
+      outcomeClass: record.outcomeClass ?? null,
+      failureCategory: record.failureCategory ?? null,
+      failureReason: record.failureReason ?? null,
       inputAvailable: stdinAttached,
       recoveredAfterRestart: record.recoveredAfterRestart ?? false,
       stdout,

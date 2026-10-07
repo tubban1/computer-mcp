@@ -3,6 +3,7 @@ import {
   classifyShellResourceDemand,
   deriveShellAdmissionBudget,
   evaluateResourcePlacement,
+  parseDarwinVmStatAvailableBytes,
   type ResourceDemand,
   type ResourceInventory,
 } from "../src/runtime/resourceAdmission.js";
@@ -75,6 +76,9 @@ const tpuDemand: ResourceDemand = {
 };
 assert.equal(evaluateResourcePlacement(tpuDemand, gpuOnly).runnable, false);
 
+const darwinAvailable = parseDarwinVmStatAvailableBytes(`Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 100.\nPages inactive: 200.\nPages speculative: 50.\nPages purgeable: 25.\nPages wired down: 999.\n`);
+assert.equal(darwinAvailable, (100 + 200 + 50) * 16_384);
+
 const eightCpuNormal: ResourceInventory = {
   version: 1,
   targetId: "host-8cpu",
@@ -143,6 +147,7 @@ console.log(
       gpuOnlyPlacement: "PASS",
       tpuMismatch: "PASS",
       dynamicEightCpuBudget: "PASS",
+      darwinReclaimableMemory: "PASS",
       constrainedAllowsOneHeavyTask: "PASS",
       pressureDownshift: "PASS",
       shellClassification: "PASS",

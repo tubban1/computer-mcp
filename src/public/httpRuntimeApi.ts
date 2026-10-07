@@ -115,10 +115,23 @@ function logicalSessionId(req: Request): string {
   const value = req.header("x-owl-session-id")?.trim();
   if (!value || !SESSION_ID_PATTERN.test(value)) {
     throw new Error(
-      "RUNTIME_SESSION_ID_REQUIRED: supply a stable x-owl-session-id (3-200 safe characters).",
+      "RUNTIME_SESSION_ID_REQUIRED: supply x-owl-session-id (3-200 safe characters).",
     );
   }
   return value;
+}
+
+function runtimeSessionMetadata(req: Request) {
+  const rawKind = req.header("x-owl-session-kind")?.trim().toLowerCase();
+  const kind = rawKind === "transient" ? "transient" : "durable";
+  const ownerSource = req.header("x-owl-owner-source")?.trim().slice(0, 80);
+  return {
+    kind: kind as "durable" | "transient",
+    ...(ownerSource ? { ownerSource } : {}),
+    ...(req.header("user-agent")
+      ? { userAgent: req.header("user-agent")! }
+      : {}),
+  };
 }
 
 function errorCode(error: unknown, message: string): string {
@@ -249,9 +262,10 @@ export function registerRuntimeHttpApi(
         if (!res.writableEnded) cancelForDisconnect();
       });
 
-      runtimeSessionManager.beginCall(sessionId, {
-        userAgent: req.header("user-agent") ?? undefined,
-      });
+      runtimeSessionManager.beginCall(
+        sessionId,
+        runtimeSessionMetadata(req),
+      );
 
       try {
         const invoke = async () => {
