@@ -2,21 +2,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
+const root = await fs.mkdtemp(path.join(os.tmpdir(), "owl-storage-retention-"));
+process.env.OWL_LAB_DATA_ROOT = root;
+
+const {
   artifactObjectPath,
   commitArtifactFromFile,
-} from "../src/storage/storageFoundation.js";
-import {
+} = await import("../src/storage/storageFoundation.js");
+const {
   collectGarbage,
   evaluateRetention,
   listStorageReferences,
   pinArtifactReference,
   registerArtifactReference,
   unpinArtifactReference,
-} from "../src/storage/storageRetention.js";
+} = await import("../src/storage/storageRetention.js");
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), "owl-storage-retention-"));
-process.env.OWL_LAB_DATA_ROOT = root;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const baseNow = Date.parse("2026-09-30T00:00:00.000Z");
 
