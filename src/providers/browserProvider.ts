@@ -25,6 +25,11 @@ import {
   OperationCancelledError,
   throwIfCancelled,
 } from "../runtime/cancellation.js";
+import {
+  browserProfileLaunchArgs,
+  browserProfilePolicy,
+  maintainBrowserProfileStorage,
+} from "./browserProfilePolicy.js";
 
 const browserPaths = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -348,6 +353,7 @@ class BrowserProvider implements ComputerProvider {
 
   async status(): Promise<ProviderStatus> {
     const executable = await detectBrowserExecutable();
+    const profilePolicy = browserProfilePolicy();
     return {
       id: this.id,
       label: this.label,
@@ -368,6 +374,12 @@ class BrowserProvider implements ComputerProvider {
         startupBudgetMs: browserStartupBudgetMs(),
         idleFreezeMs: browserIdleFreezeMs(),
         restartSurvivorGraceMs: browserRestartSurvivorGraceMs(),
+        profilePolicy: {
+          allowExtensions: profilePolicy.allowExtensions,
+          allowSync: profilePolicy.allowSync,
+          diskCacheBytes: profilePolicy.diskCacheBytes,
+          mediaCacheBytes: profilePolicy.mediaCacheBytes,
+        },
         idleFrozenPageCount: this.pausedPages.size,
         activeBrowserOperations: this.activeBrowserOperations,
         lastBrowserActivityAt: this.lastBrowserActivityAt,
@@ -684,6 +696,7 @@ class BrowserProvider implements ComputerProvider {
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-features=Translate",
+      ...browserProfileLaunchArgs(),
       "about:blank",
     ];
     if (headless) args.unshift("--headless=new");
@@ -801,6 +814,12 @@ class BrowserProvider implements ComputerProvider {
     });
     throwIfCancelled(signal);
     if (recovered) return recovered;
+
+    // Only reclaim cache after proving there is no surviving managed Chrome
+    // using this profile. Auth/session/site storage and extension settings are
+    // preserved; extension package bytes are reclaimed when extensions are
+    // disabled by policy.
+    await maintainBrowserProfileStorage(userDataDir);
 
     const configuredAttempts = Number(process.env.BROWSER_STARTUP_ATTEMPTS);
     const startupAttempts = Number.isFinite(configuredAttempts)
