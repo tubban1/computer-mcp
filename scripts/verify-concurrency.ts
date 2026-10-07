@@ -19,6 +19,7 @@ for (const dir of [parentWorkspace, repoA, repoB]) {
 await fs.mkdir(repoTx, { recursive: true });
 
 process.env.OWL_RUNTIME_MODE = "test";
+process.env.OWL_RUNTIME_ACCESS_MODE = "compat";
 process.env.OWL_STATE_ROOT = path.join(scratch, "state");
 process.env.WORKSPACE_LEASE_DIR = path.join(
   scratch,
