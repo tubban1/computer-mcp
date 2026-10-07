@@ -21,6 +21,7 @@ process.env.RUNTIME_REQUEST_REPLAY_MAX_RECORDS = "1000";
 
 const {
   RuntimeStoredReplayError,
+  maintainRuntimeRequestReplayStore,
   withRuntimeRequestReplay,
 } = await import("../src/runtime/requestReplayStore.js");
 
@@ -186,6 +187,117 @@ try {
   );
   assert.equal(rawLedger.includes(secretValue), false);
 
+  const retentionRoot = path.join(scratch, "retention");
+  const retentionDir = path.join(retentionRoot, "replay");
+  process.env.RUNTIME_REQUEST_REPLAY_DIR = retentionDir;
+  process.env.RUNTIME_REQUEST_REPLAY_KEY_PATH = path.join(
+    retentionRoot,
+    "replay.key",
+  );
+  process.env.RUNTIME_REQUEST_REPLAY_TTL_MS = "60000";
+  process.env.RUNTIME_REQUEST_REPLAY_MAX_RECORDS = "2";
+  process.env.RUNTIME_REQUEST_REPLAY_MAX_TOMBSTONES = "1000";
+
+  let retentionExecutions = 0;
+  const retentionInput = {
+    sessionId: "replay:retention",
+    idempotencyKey: "large-result",
+    method: "tasks.create",
+    params: { label: "large retention payload", steps: [] },
+  };
+  const largePayload = "x".repeat(128 * 1024);
+  await withRuntimeRequestReplay(
+    { ...retentionInput, requestId: "retention:first" },
+    async () => {
+      retentionExecutions += 1;
+      return { taskId: "task_retention", largePayload };
+    },
+  );
+
+  const liveFile = (await fs.readdir(retentionDir)).find((name) =>
+    name.endsWith(".state"),
+  );
+  assert.ok(liveFile);
+  const liveSize = (
+    await fs.stat(path.join(retentionDir, liveFile!))
+  ).size;
+
+  const maintained = await maintainRuntimeRequestReplayStore({
+    nowMs: Date.now() + 61_000,
+    limit: 100,
+  });
+  assert.equal(maintained.compacted, 1);
+  assert.equal(maintained.liveRecords, 0);
+  assert.equal(maintained.tombstones, 1);
+  assert.ok(maintained.bytesReclaimed > 100_000);
+
+  const retentionFiles = await fs.readdir(retentionDir);
+  assert.equal(
+    retentionFiles.some((name) => name.endsWith(".state")),
+    false,
+  );
+  const tombstoneFile = retentionFiles.find((name) =>
+    name.endsWith(".tombstone"),
+  );
+  assert.ok(tombstoneFile);
+  const tombstoneSize = (
+    await fs.stat(path.join(retentionDir, tombstoneFile!))
+  ).size;
+  assert.ok(tombstoneSize < liveSize / 10);
+
+  await assert.rejects(
+    () =>
+      withRuntimeRequestReplay(
+        { ...retentionInput, requestId: "retention:retry" },
+        async () => {
+          retentionExecutions += 1;
+          return { taskId: "unsafe-reexecute" };
+        },
+      ),
+    /IDEMPOTENCY_REPLAY_EXPIRED/,
+  );
+  assert.equal(retentionExecutions, 1);
+
+  await assert.rejects(
+    () =>
+      withRuntimeRequestReplay(
+        {
+          ...retentionInput,
+          requestId: "retention:conflict",
+          params: { label: "changed params", steps: [] },
+        },
+        async () => ({ taskId: "unsafe-conflict" }),
+      ),
+    /IDEMPOTENCY_KEY_CONFLICT/,
+  );
+
+  for (const suffix of ["one", "two"]) {
+    await withRuntimeRequestReplay(
+      {
+        sessionId: "replay:capacity",
+        idempotencyKey: suffix,
+        method: "tasks.create",
+        params: { label: suffix, steps: [] },
+        requestId: "capacity:" + suffix,
+      },
+      async () => ({ taskId: "task_" + suffix }),
+    );
+  }
+  await assert.rejects(
+    () =>
+      withRuntimeRequestReplay(
+        {
+          sessionId: "replay:capacity",
+          idempotencyKey: "three",
+          method: "tasks.create",
+          params: { label: "three", steps: [] },
+          requestId: "capacity:three",
+        },
+        async () => ({ taskId: "task_three" }),
+      ),
+    /IDEMPOTENCY_STORE_CAPACITY_EXCEEDED/,
+  );
+
   const responseLossScratch = path.join(scratch, "response-loss");
   const complete = await runWorker(
     responseLossScratch,
@@ -264,6 +376,9 @@ try {
         logicalSessionScopedKeys: true,
         terminalFailureReplay: true,
         encryptedLedgerNoPlaintextPayload: true,
+        expiredPayloadCompactsToEncryptedTombstone: true,
+        expiredTombstoneNeverReexecutes: true,
+        tombstonesDoNotConsumeLiveRecordCapacity: true,
         responseLossCrossProcessReplay: true,
         deadOwnerBecomesUncertain: true,
         corruptLedgerFailClosed: true,

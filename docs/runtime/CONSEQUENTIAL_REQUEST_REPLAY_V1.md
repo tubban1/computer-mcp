@@ -92,12 +92,17 @@ Replay receipts are Runtime-owned encrypted state:
 <runtime-state-root>/
   request-replay/
     <stable-record-id>.state
+    <stable-record-id>.tombstone
   request-replay.key
 ```
 
-Records are AES-256-GCM encrypted at rest.
+Both live receipts and compact tombstones are AES-256-GCM encrypted at rest.
 
-The record stores bounded coordination/receipt data, not a copy of canonical request params.
+A `.state` record stores bounded coordination/receipt data, not a copy of
+canonical request params. After the response replay window expires, Runtime
+moves the identity into a minimal `.tombstone` containing only the protected
+storage identity, session digest, canonical request digest, terminal class and
+timestamps. Result/error payloads and execution-owner detail are discarded.
 
 ## State machine
 
@@ -151,9 +156,12 @@ It never re-executes the original request.
 Defaults:
 
 ```text
-response replay window: 7 days
-maximum replay records: 10,000
-maximum stored response payload: 1 MiB
+production response replay window: 7 days
+development response replay window: 24 hours
+maximum live replay records:       10,000 production / 25,000 development
+maximum compact tombstones:        100,000
+maintenance scan batch:            500 live records
+maximum stored response payload:   1 MiB
 ```
 
 Configuration:
@@ -161,12 +169,22 @@ Configuration:
 ```text
 RUNTIME_REQUEST_REPLAY_TTL_MS
 RUNTIME_REQUEST_REPLAY_MAX_RECORDS
+RUNTIME_REQUEST_REPLAY_MAX_TOMBSTONES
+RUNTIME_REQUEST_REPLAY_MAINTENANCE_BATCH
 RUNTIME_REQUEST_REPLAY_MAX_PAYLOAD_BYTES
 ```
 
-Runtime does not evict old identities in a way that could permit duplicate execution.
+Maintenance is proactive and incremental. Runtime periodically scans terminal
+`.state` receipts and converts payloads whose effective replay window has
+expired into encrypted minimal `.tombstone` records. A policy reduction may
+shorten payload retention for an existing terminal receipt, but never removes
+the protected key/digest identity.
 
-If the configured record capacity is reached, new protected requests fail closed:
+Live receipt capacity and tombstone capacity are accounted separately.
+Tombstones therefore do not consume the live receipt budget. Runtime does not
+evict protected tombstones in a way that could permit duplicate execution.
+
+If either protected capacity is reached, new protected requests fail closed:
 
 ```text
 IDEMPOTENCY_STORE_CAPACITY_EXCEEDED

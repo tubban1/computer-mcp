@@ -16,6 +16,7 @@ import {
   getStateSchemaStatus,
 } from "../runtime/stateSchema.js";
 import { runtimeSessionManager } from "../runtime/runtimeSessionManager.js";
+import { maintainRuntimeRequestReplayStore } from "../runtime/requestReplayStore.js";
 import { RUNTIME_VERSION } from "../runtime/runtimeVersion.js";
 import { RUNTIME_PUBLIC_API_VERSION } from "../public/runtimeClient.js";
 
@@ -117,6 +118,22 @@ if (candidateMode) {
   const scheduler = startPersistentScheduler();
   const loopController = startPersistentLoopController();
   const processMonitor = startPersistentProcessMonitor();
+
+  void maintainRuntimeRequestReplayStore()
+    .then((result) => {
+      if (result.compacted > 0) {
+        console.log(
+          `OWL Runtime request replay maintenance compacted=${result.compacted} reclaimed=${result.bytesReclaimed}B live=${result.liveRecords} tombstones=${result.tombstones}`,
+        );
+      }
+    })
+    .catch((error) => {
+      console.warn(
+        `OWL Runtime request replay maintenance failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
 
   app.listen(port, "127.0.0.1", () => {
     console.log(`OWL Runtime scheduler poll=${scheduler.pollMs}ms`);

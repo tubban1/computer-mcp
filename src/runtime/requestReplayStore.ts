@@ -8,7 +8,7 @@ import {
   randomUUID,
 } from "node:crypto";
 import { z } from "zod";
-import { runtimeStatePath } from "./runtimePaths.js";
+import { runtimeMode, runtimeStatePath } from "./runtimePaths.js";
 
 export const RUNTIME_REQUEST_REPLAY_VERSION = 1 as const;
 
@@ -25,7 +25,7 @@ export type RuntimeRequestReplayError = {
   message: string;
 };
 
-type RuntimeRequestReplayRecord = {
+type RuntimeRequestReplayLiveRecord = {
   version: typeof RUNTIME_REQUEST_REPLAY_VERSION;
   storageId: string;
   sessionDigest: string;
@@ -33,7 +33,7 @@ type RuntimeRequestReplayRecord = {
   method: string;
   requestDigest: string;
   requestId: string;
-  state: RuntimeRequestReplayState;
+  state: Exclude<RuntimeRequestReplayState, "expired">;
   ownerPid: number;
   ownerInstanceId: string;
   acceptedAt: string;
@@ -42,10 +42,25 @@ type RuntimeRequestReplayRecord = {
   completedAt?: string;
   failedAt?: string;
   uncertainAt?: string;
-  terminalState?: "completed" | "failed";
   result?: unknown;
   error?: RuntimeRequestReplayError;
 };
+
+type RuntimeRequestReplayTombstone = {
+  version: typeof RUNTIME_REQUEST_REPLAY_VERSION;
+  storageId: string;
+  sessionDigest: string;
+  requestDigest: string;
+  state: "expired";
+  terminalState?: "completed" | "failed";
+  acceptedAt: string;
+  updatedAt: string;
+  expiredAt: string;
+};
+
+type RuntimeRequestReplayRecord =
+  | RuntimeRequestReplayLiveRecord
+  | RuntimeRequestReplayTombstone;
 
 type EncryptedEnvelope = {
   version: 1;
@@ -80,7 +95,7 @@ const replayErrorSchema = z.object({
   message: z.string().min(1).max(4000),
 }).strict();
 
-const replayRecordSchema = z.object({
+const replayLiveRecordSchema = z.object({
   version: z.literal(RUNTIME_REQUEST_REPLAY_VERSION),
   storageId: z.string().regex(DIGEST_PATTERN),
   sessionDigest: z.string().regex(DIGEST_PATTERN),
@@ -88,13 +103,7 @@ const replayRecordSchema = z.object({
   method: z.string().min(1).max(160),
   requestDigest: z.string().regex(DIGEST_PATTERN),
   requestId: z.string().min(1).max(200),
-  state: z.enum([
-    "in_progress",
-    "completed",
-    "failed",
-    "uncertain",
-    "expired",
-  ]),
+  state: z.enum(["in_progress", "completed", "failed", "uncertain"]),
   ownerPid: z.number().int().positive(),
   ownerInstanceId: z.string().min(1).max(100),
   acceptedAt: z.string().datetime(),
@@ -103,10 +112,26 @@ const replayRecordSchema = z.object({
   completedAt: z.string().datetime().optional(),
   failedAt: z.string().datetime().optional(),
   uncertainAt: z.string().datetime().optional(),
-  terminalState: z.enum(["completed", "failed"]).optional(),
   result: z.unknown().optional(),
   error: replayErrorSchema.optional(),
 }).strict();
+
+const replayTombstoneSchema = z.object({
+  version: z.literal(RUNTIME_REQUEST_REPLAY_VERSION),
+  storageId: z.string().regex(DIGEST_PATTERN),
+  sessionDigest: z.string().regex(DIGEST_PATTERN),
+  requestDigest: z.string().regex(DIGEST_PATTERN),
+  state: z.literal("expired"),
+  terminalState: z.enum(["completed", "failed"]).optional(),
+  acceptedAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  expiredAt: z.string().datetime().optional(),
+}).passthrough();
+
+const replayRecordSchema = z.union([
+  replayLiveRecordSchema,
+  replayTombstoneSchema,
+]);
 
 function replayDir(): string {
   return (
@@ -123,9 +148,13 @@ function keyPath(): string {
 }
 
 function replayTtlMs(): number {
+  const defaultTtlMs =
+    runtimeMode() === "development"
+      ? 24 * 60 * 60 * 1000
+      : 7 * 24 * 60 * 60 * 1000;
   const raw = Number.parseInt(
     process.env.RUNTIME_REQUEST_REPLAY_TTL_MS?.trim() ||
-      String(7 * 24 * 60 * 60 * 1000),
+      String(defaultTtlMs),
     10,
   );
   if (!Number.isSafeInteger(raw) || raw < 60_000) {
@@ -137,13 +166,41 @@ function replayTtlMs(): number {
 }
 
 function maxRecords(): number {
+  const defaultMax = runtimeMode() === "development" ? 25_000 : 10_000;
   const raw = Number.parseInt(
-    process.env.RUNTIME_REQUEST_REPLAY_MAX_RECORDS?.trim() || "10000",
+    process.env.RUNTIME_REQUEST_REPLAY_MAX_RECORDS?.trim() ||
+      String(defaultMax),
     10,
   );
   if (!Number.isSafeInteger(raw) || raw < 1 || raw > 100_000) {
     throw new Error(
-      "IDEMPOTENCY_RETENTION_INVALID: max records must be 1-100000.",
+      "IDEMPOTENCY_RETENTION_INVALID: max live records must be 1-100000.",
+    );
+  }
+  return raw;
+}
+
+function maxTombstones(): number {
+  const raw = Number.parseInt(
+    process.env.RUNTIME_REQUEST_REPLAY_MAX_TOMBSTONES?.trim() || "100000",
+    10,
+  );
+  if (!Number.isSafeInteger(raw) || raw < 1 || raw > 1_000_000) {
+    throw new Error(
+      "IDEMPOTENCY_RETENTION_INVALID: max tombstones must be 1-1000000.",
+    );
+  }
+  return raw;
+}
+
+function maintenanceBatchSize(): number {
+  const raw = Number.parseInt(
+    process.env.RUNTIME_REQUEST_REPLAY_MAINTENANCE_BATCH?.trim() || "500",
+    10,
+  );
+  if (!Number.isSafeInteger(raw) || raw < 1 || raw > 10_000) {
+    throw new Error(
+      "IDEMPOTENCY_RETENTION_INVALID: maintenance batch must be 1-10000.",
     );
   }
   return raw;
@@ -204,8 +261,20 @@ function recordId(sessionId: string, idempotencyKey: string): string {
     .digest("hex");
 }
 
-function recordPath(sessionId: string, idempotencyKey: string): string {
-  return path.join(replayDir(), recordId(sessionId, idempotencyKey) + ".state");
+function liveRecordPathFromStorageId(storageId: string): string {
+  return path.join(replayDir(), storageId + ".state");
+}
+
+function tombstonePathFromStorageId(storageId: string): string {
+  return path.join(replayDir(), storageId + ".tombstone");
+}
+
+function liveRecordPath(sessionId: string, idempotencyKey: string): string {
+  return liveRecordPathFromStorageId(recordId(sessionId, idempotencyKey));
+}
+
+function tombstonePath(sessionId: string, idempotencyKey: string): string {
+  return tombstonePathFromStorageId(recordId(sessionId, idempotencyKey));
 }
 
 function lockPath(sessionId: string, idempotencyKey: string): string {
@@ -299,23 +368,34 @@ function decrypt(
     decipher.update(Buffer.from(envelope.ciphertext, "base64")),
     decipher.final(),
   ]);
-  return replayRecordSchema.parse(
+  const parsed = replayRecordSchema.parse(
     JSON.parse(plaintext.toString("utf8")),
-  ) as RuntimeRequestReplayRecord;
+  );
+  if (parsed.state === "expired") {
+    return {
+      version: RUNTIME_REQUEST_REPLAY_VERSION,
+      storageId: parsed.storageId,
+      sessionDigest: parsed.sessionDigest,
+      requestDigest: parsed.requestDigest,
+      state: "expired",
+      terminalState: parsed.terminalState,
+      acceptedAt: parsed.acceptedAt,
+      updatedAt: parsed.updatedAt,
+      expiredAt: parsed.expiredAt ?? parsed.updatedAt,
+    };
+  }
+  return parsed as RuntimeRequestReplayLiveRecord;
 }
 
-async function readRecord(
-  sessionId: string,
-  idempotencyKey: string,
+async function readRecordFile(
+  target: string,
+  expectedStorageId: string,
 ): Promise<RuntimeRequestReplayRecord | null> {
   try {
-    const encoded = await fs.readFile(
-      recordPath(sessionId, idempotencyKey),
-      "utf8",
-    );
+    const encoded = await fs.readFile(target, "utf8");
     const envelope = JSON.parse(encoded) as EncryptedEnvelope;
     const record = decrypt(envelope, await loadExistingKey());
-    if (record.storageId !== recordId(sessionId, idempotencyKey)) {
+    if (record.storageId !== expectedStorageId) {
       throw new Error(
         "IDEMPOTENCY_STORE_CORRUPT: replay record storage identity mismatch.",
       );
@@ -335,14 +415,34 @@ async function readRecord(
   }
 }
 
+async function readRecord(
+  sessionId: string,
+  idempotencyKey: string,
+): Promise<RuntimeRequestReplayRecord | null> {
+  const storageId = recordId(sessionId, idempotencyKey);
+  const live = await readRecordFile(
+    liveRecordPath(sessionId, idempotencyKey),
+    storageId,
+  );
+  if (live) return live;
+  return await readRecordFile(
+    tombstonePath(sessionId, idempotencyKey),
+    storageId,
+  );
+}
+
 async function writeRecord(record: RuntimeRequestReplayRecord): Promise<void> {
   await ensureDir();
   const parsed = replayRecordSchema.parse(record) as RuntimeRequestReplayRecord;
   const key = await loadOrCreateKey();
-  const target = path.join(
-    replayDir(),
-    parsed.storageId + ".state",
-  );
+  const target =
+    parsed.state === "expired"
+      ? tombstonePathFromStorageId(parsed.storageId)
+      : liveRecordPathFromStorageId(parsed.storageId);
+  const staleTarget =
+    parsed.state === "expired"
+      ? liveRecordPathFromStorageId(parsed.storageId)
+      : tombstonePathFromStorageId(parsed.storageId);
   const temp =
     target + "." + process.pid + "." + randomUUID() + ".tmp";
   try {
@@ -357,6 +457,7 @@ async function writeRecord(record: RuntimeRequestReplayRecord): Promise<void> {
     );
     await fs.rename(temp, target);
     await fs.chmod(target, 0o600).catch(() => undefined);
+    await fs.rm(staleTarget, { force: true }).catch(() => undefined);
   } finally {
     await fs.rm(temp, { force: true }).catch(() => undefined);
   }
@@ -437,11 +538,16 @@ async function withRecordLock<T>(
   }
 }
 
-async function currentRecordCount(): Promise<number> {
+async function currentRecordCounts(): Promise<{
+  liveRecords: number;
+  tombstones: number;
+}> {
   await ensureDir();
-  return (await fs.readdir(replayDir())).filter((name) =>
-    name.endsWith(".state"),
-  ).length;
+  const names = await fs.readdir(replayDir());
+  return {
+    liveRecords: names.filter((name) => name.endsWith(".state")).length,
+    tombstones: names.filter((name) => name.endsWith(".tombstone")).length,
+  };
 }
 
 function validateInput(input: RuntimeRequestReplayInput): void {
@@ -490,26 +596,176 @@ export class RuntimeStoredReplayError extends Error {
   }
 }
 
+function replayPayloadDeadlineMs(
+  record: RuntimeRequestReplayRecord,
+): number | null {
+  if (record.state !== "completed" && record.state !== "failed") return null;
+  const storedDeadline = record.replayUntil
+    ? Date.parse(record.replayUntil)
+    : Number.POSITIVE_INFINITY;
+  const terminalAt =
+    record.state === "completed"
+      ? record.completedAt ?? record.updatedAt
+      : record.failedAt ?? record.updatedAt;
+  const policyDeadline = Date.parse(terminalAt) + replayTtlMs();
+  return Math.min(storedDeadline, policyDeadline);
+}
+
+function toReplayTombstone(
+  record: RuntimeRequestReplayLiveRecord,
+  nowMs: number,
+): RuntimeRequestReplayTombstone {
+  if (record.state !== "completed" && record.state !== "failed") {
+    throw new Error(
+      "IDEMPOTENCY_RETENTION_INVALID: only terminal replay receipts can be compacted.",
+    );
+  }
+  const now = new Date(nowMs).toISOString();
+  return {
+    version: RUNTIME_REQUEST_REPLAY_VERSION,
+    storageId: record.storageId,
+    sessionDigest: record.sessionDigest,
+    requestDigest: record.requestDigest,
+    state: "expired",
+    terminalState: record.state,
+    acceptedAt: record.acceptedAt,
+    updatedAt: now,
+    expiredAt: now,
+  };
+}
+
 async function expirePayloadIfNeeded(
   record: RuntimeRequestReplayRecord,
+  nowMs = Date.now(),
 ): Promise<RuntimeRequestReplayRecord> {
+  if (record.state === "expired") {
+    await writeRecord(record);
+    return record;
+  }
+  const deadline = replayPayloadDeadlineMs(record);
   if (
-    (record.state === "completed" || record.state === "failed") &&
-    record.replayUntil &&
-    Date.parse(record.replayUntil) <= Date.now()
+    deadline !== null &&
+    Number.isFinite(deadline) &&
+    deadline <= nowMs
   ) {
-    const expired: RuntimeRequestReplayRecord = {
-      ...record,
-      state: "expired",
-      terminalState: record.state,
-      result: undefined,
-      error: undefined,
-      updatedAt: new Date().toISOString(),
-    };
+    const expired = toReplayTombstone(record, nowMs);
     await writeRecord(expired);
     return expired;
   }
   return record;
+}
+
+export type RuntimeRequestReplayMaintenanceResult = {
+  scanned: number;
+  compacted: number;
+  liveRecords: number;
+  tombstones: number;
+  bytesBefore: number;
+  bytesAfter: number;
+  bytesReclaimed: number;
+};
+
+let maintenanceCursor = 0;
+let lastMaintenanceStartedAt = 0;
+let maintenancePromise: Promise<RuntimeRequestReplayMaintenanceResult> | null =
+  null;
+
+export async function maintainRuntimeRequestReplayStore(options: {
+  nowMs?: number;
+  limit?: number;
+} = {}): Promise<RuntimeRequestReplayMaintenanceResult> {
+  await ensureDir();
+  const nowMs = options.nowMs ?? Date.now();
+  const limit = Math.max(
+    1,
+    Math.min(options.limit ?? maintenanceBatchSize(), 10_000),
+  );
+  const names = (await fs.readdir(replayDir()))
+    .filter((name) => name.endsWith(".state"))
+    .sort();
+  const selected: string[] = [];
+  if (names.length > 0) {
+    maintenanceCursor %= names.length;
+    for (let index = 0; index < Math.min(limit, names.length); index += 1) {
+      selected.push(names[(maintenanceCursor + index) % names.length]!);
+    }
+    maintenanceCursor =
+      (maintenanceCursor + selected.length) % Math.max(names.length, 1);
+  }
+
+  let compacted = 0;
+  let bytesBefore = 0;
+  let bytesAfter = 0;
+  const key = selected.length > 0 ? await loadExistingKey().catch(() => null) : null;
+
+  for (const name of selected) {
+    if (!key) break;
+    const target = path.join(replayDir(), name);
+    const before = await fs.stat(target).catch(() => null);
+    if (!before) continue;
+    let record: RuntimeRequestReplayRecord;
+    try {
+      const encoded = await fs.readFile(target, "utf8");
+      record = decrypt(JSON.parse(encoded) as EncryptedEnvelope, key);
+    } catch {
+      continue;
+    }
+    if (record.state === "expired") {
+      const tombstone = replayTombstoneSchema.parse({
+        ...record,
+        expiredAt: record.updatedAt,
+      }) as RuntimeRequestReplayTombstone;
+      await writeRecord(tombstone);
+      compacted += 1;
+    } else {
+      const deadline = replayPayloadDeadlineMs(record);
+      if (
+        deadline === null ||
+        !Number.isFinite(deadline) ||
+        deadline > nowMs
+      ) {
+        continue;
+      }
+      await writeRecord(toReplayTombstone(record, nowMs));
+      compacted += 1;
+    }
+    const after = await fs
+      .stat(tombstonePathFromStorageId(record.storageId))
+      .catch(() => null);
+    bytesBefore += before.size;
+    bytesAfter += after?.size ?? 0;
+  }
+
+  const counts = await currentRecordCounts();
+  return {
+    scanned: selected.length,
+    compacted,
+    liveRecords: counts.liveRecords,
+    tombstones: counts.tombstones,
+    bytesBefore,
+    bytesAfter,
+    bytesReclaimed: Math.max(0, bytesBefore - bytesAfter),
+  };
+}
+
+function maybeMaintainReplayStore(): void {
+  const now = Date.now();
+  if (now - lastMaintenanceStartedAt < 60_000) return;
+  if (maintenancePromise) return;
+  lastMaintenanceStartedAt = now;
+  maintenancePromise = maintainRuntimeRequestReplayStore()
+    .catch(() => ({
+      scanned: 0,
+      compacted: 0,
+      liveRecords: 0,
+      tombstones: 0,
+      bytesBefore: 0,
+      bytesAfter: 0,
+      bytesReclaimed: 0,
+    }))
+    .finally(() => {
+      maintenancePromise = null;
+    });
 }
 
 async function reserve(
@@ -585,9 +841,19 @@ async function reserve(
         }
       }
 
-      if ((await currentRecordCount()) >= maxRecords()) {
+      let counts = await currentRecordCounts();
+      if (counts.liveRecords >= maxRecords()) {
+        await maintainRuntimeRequestReplayStore({
+          limit: Math.min(maxRecords(), 10_000),
+        });
+        counts = await currentRecordCounts();
+      }
+      if (
+        counts.liveRecords >= maxRecords() ||
+        counts.tombstones >= maxTombstones()
+      ) {
         throw new Error(
-          "IDEMPOTENCY_STORE_CAPACITY_EXCEEDED: replay ledger reached its configured record limit; refusing unprotected eviction.",
+          "IDEMPOTENCY_STORE_CAPACITY_EXCEEDED: replay ledger reached its protected capacity; refusing unsafe eviction.",
         );
       }
 
@@ -621,7 +887,11 @@ async function finalizeCompleted(
 ): Promise<void> {
   await withRecordLock(input.sessionId, input.idempotencyKey, async () => {
     const record = await readRecord(input.sessionId, input.idempotencyKey);
-    if (!record || record.requestDigest !== requestDigest) {
+    if (
+      !record ||
+      record.state !== "in_progress" ||
+      record.requestDigest !== requestDigest
+    ) {
       throw new Error(
         "IDEMPOTENCY_RECEIPT_PERSIST_FAILED: replay record disappeared or changed before completion.",
       );
@@ -630,15 +900,15 @@ async function finalizeCompleted(
     const now = new Date();
     const encoded = JSON.stringify(result ?? null);
     if (Buffer.byteLength(encoded, "utf8") > maxPayloadBytes()) {
-      await writeRecord({
+      const terminal: RuntimeRequestReplayLiveRecord = {
         ...record,
-        state: "expired",
-        terminalState: "completed",
+        state: "completed",
         result: undefined,
         error: undefined,
         completedAt: now.toISOString(),
         updatedAt: now.toISOString(),
-      });
+      };
+      await writeRecord(toReplayTombstone(terminal, now.getTime()));
       return;
     }
 
@@ -647,7 +917,6 @@ async function finalizeCompleted(
       state: "completed",
       result,
       error: undefined,
-      terminalState: undefined,
       completedAt: now.toISOString(),
       replayUntil: new Date(now.getTime() + replayTtlMs()).toISOString(),
       updatedAt: now.toISOString(),
@@ -661,14 +930,19 @@ async function finalizeUncertain(
 ): Promise<void> {
   await withRecordLock(input.sessionId, input.idempotencyKey, async () => {
     const record = await readRecord(input.sessionId, input.idempotencyKey);
-    if (!record || record.requestDigest !== requestDigest) return;
+    if (
+      !record ||
+      record.state !== "in_progress" ||
+      record.requestDigest !== requestDigest
+    ) {
+      return;
+    }
     const now = new Date().toISOString();
     await writeRecord({
       ...record,
       state: "uncertain",
       result: undefined,
       error: undefined,
-      terminalState: undefined,
       uncertainAt: now,
       updatedAt: now,
     });
@@ -682,7 +956,11 @@ async function finalizeFailed(
 ): Promise<void> {
   await withRecordLock(input.sessionId, input.idempotencyKey, async () => {
     const record = await readRecord(input.sessionId, input.idempotencyKey);
-    if (!record || record.requestDigest !== requestDigest) {
+    if (
+      !record ||
+      record.state !== "in_progress" ||
+      record.requestDigest !== requestDigest
+    ) {
       throw new Error(
         "IDEMPOTENCY_RECEIPT_PERSIST_FAILED: replay record disappeared or changed before failure receipt.",
       );
@@ -693,7 +971,6 @@ async function finalizeFailed(
       state: "failed",
       result: undefined,
       error: normalizedError(error),
-      terminalState: undefined,
       failedAt: now.toISOString(),
       replayUntil: new Date(now.getTime() + replayTtlMs()).toISOString(),
       updatedAt: now.toISOString(),
@@ -718,6 +995,7 @@ export async function withRuntimeRequestReplay<T>(
   operation: () => Promise<T>,
 ): Promise<RuntimeRequestReplayResult<T>> {
   validateInput(input);
+  maybeMaintainReplayStore();
   const requestDigest = canonicalRuntimeRequestDigest(
     input.method,
     input.params,
@@ -824,10 +1102,12 @@ export function getRuntimeRequestReplayManifest() {
     keyHeader: "x-owl-idempotency-key",
     requestDigest: "sha256(canonical contractVersion + method + params)",
     responseReplayTtlMs: replayTtlMs(),
-    maxRecords: maxRecords(),
+    maxLiveRecords: maxRecords(),
+    maxTombstones: maxTombstones(),
+    maintenanceBatchSize: maintenanceBatchSize(),
     maxPayloadBytes: maxPayloadBytes(),
     crashRecovery: "fail-closed-uncertain",
-    expiredReplay: "never-reexecute",
+    expiredReplay: "encrypted-minimal-tombstone-never-reexecute",
     encryptedAtRest: true,
   };
 }
