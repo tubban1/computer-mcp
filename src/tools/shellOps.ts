@@ -37,6 +37,7 @@ import {
 } from "../runtime/cancellation.js";
 import {
   acquireShellConcurrencyPermit,
+  managedProcessAdmissionWaitMs,
   releaseShellConcurrencyPermit,
 } from "../runtime/shellConcurrencyGate.js";
 
@@ -518,6 +519,7 @@ export async function startProcess(
     workspace,
     kind: "managed",
     command,
+    waitMs: managedProcessAdmissionWaitMs(),
   });
 
   const leaseContext =

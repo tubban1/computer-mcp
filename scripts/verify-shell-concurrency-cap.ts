@@ -28,6 +28,7 @@ process.env.OWL_SHELL_MAX_CONCURRENCY_PER_WORKSPACE = "2";
 process.env.OWL_RESOURCE_TEST_PARALLELISM = "8";
 process.env.OWL_RESOURCE_TEST_PRESSURE_MODE = "normal";
 process.env.OWL_SHELL_CONCURRENCY_WAIT_MS = "3000";
+process.env.OWL_SHELL_MANAGED_START_WAIT_MS = "1200";
 process.env.OWL_SHELL_CONCURRENCY_POLL_MS = "25";
 
 const { withExecutionContext } = await import(
@@ -36,7 +37,7 @@ const { withExecutionContext } = await import(
 const { runtimeSessionManager } = await import(
   "../src/runtime/runtimeSessionManager.js"
 );
-const { listProcesses, startProcess } = await import(
+const { killProcess, listProcesses, startProcess } = await import(
   "../src/tools/shellOps.js"
 );
 const { shellConcurrencyStatus } = await import(
@@ -111,6 +112,42 @@ try {
     );
   }
 
+  const blockerA = await withExecutionContext(sessions[0]!, async () =>
+    await startProcess("sleep 5", repoA, "read"),
+  );
+  const blockerB = await withExecutionContext(sessions[1]!, async () =>
+    await startProcess("sleep 5", repoA, "read"),
+  );
+
+  const failFastStartedAt = Date.now();
+  let failFastError: (Error & { code?: string }) | null = null;
+  try {
+    await withExecutionContext(sessions[2]!, async () =>
+      await startProcess("sleep 0.1", repoA, "read"),
+    );
+  } catch (error) {
+    failFastError = error as Error & { code?: string };
+  }
+  const failFastWallMs = Date.now() - failFastStartedAt;
+
+  assert.equal(
+    failFastError?.code,
+    "SHELL_CAPACITY_BUSY",
+    `expected managed start capacity error, received ${failFastError?.code ?? failFastError?.message ?? "none"}`,
+  );
+  assert.ok(
+    failFastWallMs >= 900,
+    `managed start failed suspiciously early: ${failFastWallMs}ms`,
+  );
+  assert.ok(
+    failFastWallMs < 3_000,
+    `managed start exceeded control-plane SLA: ${failFastWallMs}ms`,
+  );
+
+  await killProcess(blockerA.processId, "SIGTERM", blockerA.controlToken);
+  await killProcess(blockerB.processId, "SIGTERM", blockerB.controlToken);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
   console.log(
     JSON.stringify(
       {
@@ -119,9 +156,12 @@ try {
           global: 4,
           perWorkspace: 2,
         },
+        managedStartAdmissionWaitMs: 1200,
         sameWorkspaceThirdWaitMs: thirdWaitMs,
         siblingWorkspaceWaitMs: siblingWaitMs,
+        capacityBusyWallMs: failFastWallMs,
         backpressure: "PASS",
+        managedStartFailFast: "PASS",
         crossWorkspaceConcurrency: "PASS",
       },
       null,

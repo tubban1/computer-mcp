@@ -87,6 +87,15 @@ const pollMs = boundedInteger(
   1_000,
 );
 
+export function managedProcessAdmissionWaitMs(): number {
+  return boundedInteger(
+    process.env.OWL_SHELL_MANAGED_START_WAIT_MS,
+    2_000,
+    0,
+    5_000,
+  );
+}
+
 const active = new Map<string, ActivePermit>();
 const pending = new Map<string, PendingPermit>();
 
