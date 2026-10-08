@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  normalizeProcessOutputTailChars,
+  processOutputTailCharsInput,
+} from "../runtime/agentFacingInputs.js";
 import { listDirectory } from "../tools/listDirectory.js";
 import { readFile } from "../tools/readFile.js";
 import {
@@ -268,13 +272,13 @@ const actions = {
   },
   "shell.output": {
     provider: "shell",
-    description: "Read stdout/stderr from a managed process.",
+    description: "Read stdout/stderr from a managed process. Tail size is clamped to 1000-200000 characters.",
     schema: z.object({
       process_id: z.string(),
-      tail_chars: z.number().int().min(1000).max(200000).optional(),
+      tail_chars: processOutputTailCharsInput,
     }),
     run: ({ process_id, tail_chars }: any) =>
-      getProcessOutput(process_id, tail_chars ?? 20000),
+      getProcessOutput(process_id, normalizeProcessOutputTailChars(tail_chars)),
   },
   "shell.kill": {
     provider: "shell",

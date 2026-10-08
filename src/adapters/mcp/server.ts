@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { processOutputTailCharsInput } from "../../runtime/agentFacingInputs.js";
 import { listDirectory } from "../../tools/listDirectory.js";
 import { readFile } from "../../tools/readFile.js";
 import {
@@ -644,10 +645,10 @@ function createServer() {
 
   server.tool(
     "get_process_output",
-    "Read captured stdout/stderr from a process started by this computer-mcp instance.",
+    "Read captured stdout/stderr from a managed process. Numeric tail_chars values outside 1000-200000 are safely clamped rather than rejected.",
     {
       process_id: z.string(),
-      tail_chars: z.number().int().min(1000).max(200000).optional(),
+      tail_chars: processOutputTailCharsInput,
     },
     {
       title: "Get Process Output",
