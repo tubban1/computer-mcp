@@ -69,6 +69,13 @@ try {
   assert.equal(revoked.state, "REVOKED");
   await expectDenied(/RUNTIME_ACCESS_REVOKED/);
 
+  // F10: explicit revocation must remain enforced in compatibility mode.
+  process.env.OWL_RUNTIME_ACCESS_MODE = "compat";
+  const compatRevoked = await client.getRuntimeAccessState();
+  assert.equal(compatRevoked.state, "REVOKED");
+  await expectDenied(/RUNTIME_ACCESS_REVOKED/);
+  process.env.OWL_RUNTIME_ACCESS_MODE = "enforced";
+
   await client.authorizeRuntimeAccess({
     deviceId: "dev_reenrolled",
     canRun: true,

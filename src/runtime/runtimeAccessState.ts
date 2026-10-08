@@ -112,7 +112,7 @@ async function writeState(state: RuntimeAccessState): Promise<void> {
 
 function effectiveState(state: RuntimeAccessState): RuntimeAccessState {
   const mode = runtimeAccessMode();
-  if (mode === "compat") {
+  if (mode === "compat" && state.state !== "REVOKED") {
     return {
       ...state,
       mode,
@@ -291,13 +291,14 @@ export async function revokeRuntimeAccess(
 
 export async function assertRuntimeAccessAllowed(): Promise<RuntimeAccessState> {
   const state = await getRuntimeAccessState();
-  if (state.mode === "compat" || state.state === "READY") return state;
-
+  // An explicit device revocation must override legacy compat bypass.
   if (state.state === "REVOKED") {
     throw new Error(
       `RUNTIME_ACCESS_REVOKED: Runtime computer access is disabled (${state.reasonCode ?? "DEVICE_REVOKED"}).`,
     );
   }
+  if (state.mode === "compat" || state.state === "READY") return state;
+
   if (state.reasonCode === "LEASE_EXPIRED") {
     throw new Error(
       "RUNTIME_ACCESS_LEASE_EXPIRED: Runtime authorization lease expired.",
