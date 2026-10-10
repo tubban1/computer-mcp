@@ -162,7 +162,7 @@ async function readClassificationTail(filePath: string): Promise<string> {
   }
 }
 
-function classifyManagedProcessOutcome(input: {
+export function classifyManagedProcessOutcome(input: {
   command: string;
   status: ManagedProcessRecord["status"];
   exitCode: number | null;
@@ -203,6 +203,19 @@ function classifyManagedProcessOutcome(input: {
 
   const haystack = `${input.command}\n${input.text ?? ""}`.toLowerCase();
   const match = (pattern: RegExp) => pattern.test(haystack);
+  // TAP assertion failures outrank unrelated auth/network terms in test logs.
+  const testOutput = input.text ?? "";
+  if (
+    /(?:^|\n)\s*not ok \d+\s+-/m.test(testOutput) ||
+    /(?:^|\n)\s*failureType:\s*['"]testCodeFailure['"]/m.test(testOutput) ||
+    /(?:^|\n)\s*(?:code:\s*['"]ERR_ASSERTION['"]|name:\s*['"]AssertionError['"])/m.test(testOutput)
+  ) {
+    return {
+      outcomeClass: "workload_failure" as const,
+      failureCategory: "workload",
+      failureReason: "Test runner reported a test or assertion failure; OWL Runtime remained available.",
+    };
+  }
 
   if (match(/resource_wait_timeout|capacity_busy|\benomem\b|out of memory|no space left|\benospc\b|resource temporarily unavailable/)) {
     return {
