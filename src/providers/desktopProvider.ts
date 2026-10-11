@@ -173,7 +173,13 @@ async function launchHelper(): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5000) {
     if (launchError) throw launchError;
-    if (await socketExists()) return;
+    // A stale socket inode is not readiness: require an actual handshake.
+    if (await socketExists()) {
+      try {
+        await sendHelperRequestOnce("status", {}, 500);
+        return;
+      } catch { /* retry while helper is still starting */ }
+    }
     if (child.exitCode != null) {
       throw new Error(
         `OWL LAB Helper exited before creating its Unix socket (code ${child.exitCode}).`,
@@ -384,6 +390,9 @@ function cleanField(value: string): string {
   return value.replaceAll("\\n", " ").replaceAll("\\r", " ").trim();
 }
 
+let lastHelperHealthRecoveryFailure = 0;
+const HELPER_HEALTH_RETRY_MS = 30_000;
+
 class DesktopProvider implements ComputerProvider {
   readonly id = "desktop";
   readonly label = "Desktop";
@@ -393,16 +402,21 @@ class DesktopProvider implements ComputerProvider {
       process.platform === "darwin" && (await helperInstalled());
     let helper: unknown = null;
 
-    if (installed && (await socketExists())) {
+    if (installed && helperMode() !== "disabled" && envFlag("ALLOW_GUI", false)) {
+      const retryAllowed =
+        Date.now() - lastHelperHealthRecoveryFailure >= HELPER_HEALTH_RETRY_MS;
       try {
         helper = await helperRequest("status", {}, {
-          autoLaunch: false,
+          autoLaunch: helperMode() === "auto" && retryAllowed,
           timeoutMs: 3000,
         });
+        lastHelperHealthRecoveryFailure = 0;
       } catch (error) {
-        helper = {
-          error: error instanceof Error ? error.message : String(error),
-        };
+        // Read-only cooldown probes must not postpone the next recovery attempt.
+        if (helperMode() === "auto" && retryAllowed) {
+          lastHelperHealthRecoveryFailure = Date.now();
+        }
+        helper = { error: error instanceof Error ? error.message : String(error) };
       }
     }
 
