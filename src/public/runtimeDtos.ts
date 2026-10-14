@@ -237,6 +237,8 @@ export type PublicApprovalV1 = {
   ownerTaskId?: string;
   ownerStepId?: string;
   reason: string;
+  review?: {fields:Record<string,string|number|boolean>;redactedFields:string[];complete:boolean};
+  humanVerified?:boolean;
 };
 
 export type PublicScheduleTriggerV1 =

@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { ActionContract } from "../runtime/actionContracts.js";
 import { currentExecutionContext } from "../runtime/executionContext.js";
 import { runtimeStatePath } from "../runtime/runtimePaths.js";
+import {scopedActionRequiresApproval} from "../security/scopedCapabilities.js";
+import {humanApprovalEnforced,verifyHumanApprovalSignature,approvalSafeReview} from "./humanApprovalProof.js";
 
 export type ApprovalMode = "compat" | "enforce";
 export type ApprovalState = "pending" | "approved" | "consumed" | "denied" | "expired";
@@ -27,6 +29,9 @@ export type ApprovalRecord = {
   ownerTaskId?: string;
   ownerStepId?: string;
   reason: string;
+  review?: ReturnType<typeof approvalSafeReview>;
+  humanVerified?:boolean;
+  humanSignature?:string;
 };
 
 const DEFAULT_APPROVAL_ACTIONS = ["fs.delete", "git.push", "tx.rollback"];
@@ -127,7 +132,7 @@ export async function listApprovals(options?: { state?: ApprovalState }) {
 
 function actionRequiresApproval(action: string, contract: Pick<ActionContract, "sideEffects">) {
   // Force Publish action approval independently of compatibility mode.
-  if (action === "publish.mock_effect") return true;
+  if (action === "publish.mock_effect" || scopedActionRequiresApproval(action)) return true;
   if (approvalMode() !== "enforce") return false;
   const configuredActions = csvEnv("OWL_APPROVAL_ACTIONS") ?? DEFAULT_APPROVAL_ACTIONS;
   const configuredEffects = csvEnv("OWL_APPROVAL_SIDE_EFFECTS") ?? [];
@@ -195,6 +200,7 @@ async function createRequest(input: {
     ...(context.taskId ? { ownerTaskId: context.taskId } : {}),
     ...(context.stepId ? { ownerStepId: context.stepId } : {}),
     reason: `${input.subjectType} ${input.subject} requires explicit approval under the active OWL policy.`,
+    review:approvalSafeReview(input.subject,input.args),
   };
   await writeRecord(record);
   return record;
@@ -220,6 +226,7 @@ async function authorize(input: {
   const fingerprint = approvalFingerprint(input.subjectType, input.subject, input.args);
   const existing = await findMatching(fingerprint);
   if (existing?.state === "approved") {
+    if(humanApprovalEnforced() && (!existing.humanVerified || !verifyHumanApprovalSignature(existing,existing.humanSignature))) throw new Error("HUMAN_APPROVAL_SIGNATURE_INVALID");
     existing.state = "consumed";
     existing.consumedAt = new Date().toISOString();
     await writeRecord(existing);
@@ -257,11 +264,15 @@ export async function authorizeSkill(
   });
 }
 
-export async function approveApproval(id: string, confirm: boolean) {
+export async function approveApproval(id: string, confirm: boolean, proof?:string) {
   if (!confirm) throw new Error("Approval requires confirm=true.");
   const record = await readApproval(id);
   if (record.state !== "pending") {
     throw new Error(`Approval ${id} is ${record.state}; only pending requests can be approved.`);
+  }
+  if(humanApprovalEnforced()){
+    if(!verifyHumanApprovalSignature(record,proof))throw new Error("HUMAN_APPROVAL_PROOF_REQUIRED_OR_INVALID");
+    record.humanVerified=true;record.humanSignature=proof;
   }
   record.state = "approved";
   record.approvedAt = new Date().toISOString();

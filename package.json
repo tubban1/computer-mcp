@@ -98,7 +98,8 @@
     "verify:runtime-session-lifecycle": "OWL_RUNTIME_MODE=test tsx scripts/verify-runtime-session-lifecycle.ts",
     "verify:browser-profile-policy": "OWL_RUNTIME_MODE=test tsx scripts/verify-browser-profile-policy.ts",
     "verify:agent-facing-params": "OWL_RUNTIME_MODE=test tsx scripts/verify-agent-facing-params.ts",
-    "verify:publish-m5": "OWL_RUNTIME_MODE=test tsx scripts/verify-publish-provider-m5.ts"
+    "verify:publish-m5": "OWL_RUNTIME_MODE=test tsx scripts/verify-publish-provider-m5.ts",
+    "verify:publish-m6": "OWL_RUNTIME_MODE=test tsx scripts/verify-publish-runtime-m6.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

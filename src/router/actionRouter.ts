@@ -48,6 +48,7 @@ import { browserProvider } from "../providers/browserProvider.js";
 import { desktopProvider } from "../providers/desktopProvider.js";
 import { getProviderStatuses } from "../providers/registry.js";
 import { mockPublishEffect, inspectMockPublish } from "../providers/publishMockProvider.js";
+import { withApprovedScopedCapability } from "../security/scopedCapabilities.js";
 import {
   getActionContract,
   summarizeActionContract,
@@ -898,7 +899,7 @@ export async function executeRoutedAction(
   const executed = await resourceArbiter.withResources(
     action,
     resources,
-    async () => await definition.run(parsed),
+    async () => await withApprovedScopedCapability(action,parsed,approval.receipt,async ()=>await definition.run(parsed)),
   );
   const observation = await observeRoutedActionOutcome(
     action,

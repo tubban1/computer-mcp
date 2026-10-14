@@ -499,10 +499,11 @@ export class HttpRuntimeClient implements RuntimeClient, UserSkillRuntimeClient,
   async approve(
     approvalId: string,
     confirm: boolean,
+    humanProof?:string,
   ): Promise<PublicApprovalActionResultV1> {
     return await this.rpc<PublicApprovalActionResultV1>(
       "approvals.approve",
-      { approvalId, confirm },
+      { approvalId, confirm, ...(humanProof?{humanProof}:{}) },
     );
   }
 

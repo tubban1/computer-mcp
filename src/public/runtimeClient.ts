@@ -127,10 +127,8 @@ export const RUNTIME_PUBLIC_API_VERSION = "0.1" as const;
 export type RuntimeTransport = "in-process" | "ipc" | "http" | "mock";
 
 function toPublicApproval(record: ApprovalRecord): PublicApprovalV1 {
-  return {
-    schemaVersion: 1,
-    ...record,
-  };
+  const {humanSignature:_privateProof,...visible}=record;
+  return {schemaVersion:1,...visible};
 }
 
 
@@ -486,7 +484,7 @@ export interface RuntimeClient {
 
   listApprovals(state?: ApprovalState): Promise<PublicApprovalV1[]>;
   getApproval(approvalId: string): Promise<PublicApprovalV1>;
-  approve(approvalId: string, confirm: boolean): Promise<PublicApprovalActionResultV1>;
+  approve(approvalId: string, confirm: boolean, humanProof?:string): Promise<PublicApprovalActionResultV1>;
   deny(approvalId: string, confirm: boolean): Promise<PublicApprovalActionResultV1>;
 
   process(request: ProcessRequest): Promise<unknown>;
@@ -827,8 +825,9 @@ export class InProcessRuntimeClient implements RuntimeClient, UserSkillRuntimeCl
   async approve(
     approvalId: string,
     confirm: boolean,
+    humanProof?:string,
   ): Promise<PublicApprovalActionResultV1> {
-    const approval = await approveApproval(approvalId, confirm);
+    const approval = await approveApproval(approvalId, confirm,humanProof);
     if (!approval.ownerTaskId || !approval.ownerStepId) {
       return { schemaVersion: 1, approval: toPublicApproval(approval), resume: null };
     }

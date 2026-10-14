@@ -337,6 +337,7 @@ export async function invokeRuntimeRpc(
       return await client.approve(
         requiredString(object, "approvalId"),
         object.confirm === true,
+        typeof object.humanProof === "string" ? object.humanProof:undefined,
       );
     case "approvals.deny":
       return await client.deny(

@@ -1,0 +1,40 @@
+import {createPublicKey,createHash,verify} from "node:crypto";
+import type {ApprovalRecord} from "./approvalPolicy.js";
+
+export const humanApprovalEnforced=()=>process.env.OWL_HUMAN_APPROVAL_ENFORCE==="1"||process.env.OWL_SCOPED_CAPABILITIES==="1";
+export function humanApprovalMessage(r:ApprovalRecord){
+ return JSON.stringify({domain:"OWL_HUMAN_APPROVAL_V1",id:r.id,fingerprint:r.fingerprint,
+  subjectType:r.subjectType,subject:r.subject,session:r.ownerSessionId,
+  task:r.ownerTaskId??null,step:r.ownerStepId??null,expiresAt:r.expiresAt});
+}
+export function verifyHumanApprovalSignature(r:ApprovalRecord,sig:unknown){
+ if(typeof sig!=="string"||!/^[A-Za-z0-9+/]{84,88}={0,2}$/.test(sig))return false;
+ const b64=process.env.OWL_HUMAN_APPROVAL_PUBLIC_KEY_B64;
+ if(!b64)return false;
+ try{
+  const key=createPublicKey({key:Buffer.from(b64,"base64"),format:"der",type:"spki"});
+  return key.asymmetricKeyType==="ed25519"&&verify(null,
+   Buffer.from(humanApprovalMessage(r),"utf8"),key,Buffer.from(sig,"base64"));
+ }catch{return false;}
+}
+export function approvalSafeReview(subject:string,value:unknown){
+ const args=(value&&typeof value==="object"&&!Array.isArray(value)?value:{}) as Record<string,unknown>;
+ const allow=subject==="git.push"?["cwd","remote","branch"]:
+  subject==="fs.delete"?["path","cwd","recursive"]:
+  subject==="tx.rollback"?["id","transactionId"]:
+  subject==="publish.mock_effect"?
+   ["brandId","accountId","platform","targetId","visibility","revisionDigest","mediaSha256","effectKey","captionSha256","humanContentApproved","maxIncrementalApiCostUsdCents","policyMode"]:
+  ["cwd","workspace_mode"];
+ const fields:Record<string,string|number|boolean>={};
+ for(const k of allow){
+  const v=args[k];
+  if(typeof v==="string")fields[k]=v.slice(0,220);
+  else if(typeof v==="number"||typeof v==="boolean")fields[k]=v;
+ }
+ if(subject.startsWith("shell.")&&typeof args.command==="string"){
+  fields.commandSha256=createHash("sha256").update(args.command).digest("hex");
+  fields.commandLength=args.command.length;
+ }
+ return {fields,redactedFields:Object.keys(args).filter(k=>!allow.includes(k)),
+  complete:Object.keys(args).every(k=>allow.includes(k))};
+}
