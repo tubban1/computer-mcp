@@ -34,7 +34,7 @@ export type ApprovalRecord = {
   humanSignature?:string;
 };
 
-const DEFAULT_APPROVAL_ACTIONS = ["fs.delete", "git.push", "tx.rollback"];
+const DEFAULT_APPROVAL_ACTIONS = ["fs.delete", "tx.rollback"];
 
 function approvalDir() {
   return runtimeStatePath("approvals");

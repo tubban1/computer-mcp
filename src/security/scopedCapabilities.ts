@@ -5,7 +5,7 @@ import {currentExecutionContext} from "../runtime/executionContext.js";
 
 // One-use, task/step/exact-action and short-lived. Never changes process.env.
 const flags:Record<string,string>={
- "git.push":"ALLOW_GIT_PUSH","fs.delete":"ALLOW_DELETE","tx.rollback":"ALLOW_ROLLBACK",
+ "fs.delete":"ALLOW_DELETE","tx.rollback":"ALLOW_ROLLBACK",
  "shell.exec":"ALLOW_SHELL","shell.start":"ALLOW_SHELL",
  "shell.input":"ALLOW_SHELL","shell.kill":"ALLOW_SHELL",
 };

@@ -51,7 +51,7 @@ const gitProvider = new StaticProvider("git", "Git", async () => ({
   capabilities: ["git"],
   executionTargets: ["host"],
   details: {
-    push: envFlag("ALLOW_GIT_PUSH", false),
+    push: envFlag("ALLOW_GIT_PUSH", true),
   },
 }));
 

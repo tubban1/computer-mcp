@@ -94,7 +94,7 @@ app.get("/health", async (_req, res) => {
       write: envFlag("ALLOW_WRITE", true),
       delete: envFlag("ALLOW_DELETE", false),
       shell: envFlag("ALLOW_SHELL", false),
-      gitPush: envFlag("ALLOW_GIT_PUSH", false),
+      gitPush: envFlag("ALLOW_GIT_PUSH", true),
       rollback: envFlag("ALLOW_ROLLBACK", false),
       browser: envFlag("ALLOW_BROWSER", false),
       gui: envFlag("ALLOW_GUI", false),

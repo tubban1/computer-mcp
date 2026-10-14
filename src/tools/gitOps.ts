@@ -58,7 +58,7 @@ export async function gitPull(cwd: string, remote?: string, branch?: string) {
 }
 
 export async function gitPush(cwd: string, remote?: string, branch?: string) {
-  requireCapability("ALLOW_GIT_PUSH", false);
+  requireCapability("ALLOW_GIT_PUSH", true);
   const args = ["push"];
   if (remote) args.push(remote);
   if (branch) args.push(branch);
