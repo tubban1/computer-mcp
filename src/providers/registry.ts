@@ -3,6 +3,7 @@ import { configuredRoots, runtimeOwnedRoots } from "../security/pathGuard.js";
 import type { ComputerProvider, ProviderStatus } from "./types.js";
 import { browserProvider } from "./browserProvider.js";
 import { desktopProvider } from "./desktopProvider.js";
+import { publishMockCapability } from "./publishMockProvider.js";
 
 class StaticProvider implements ComputerProvider {
   constructor(
@@ -65,6 +66,13 @@ const transactionProvider = new StaticProvider("transaction", "Transaction", asy
   },
 }));
 
+const publishMockStatusProvider = new StaticProvider("publish-mock", "Publish Mock (test only)", async () => {
+  const capability=publishMockCapability();
+  return { id:"publish-mock",label:"Publish Mock (test only)",
+    enabled:capability.enabled, available:capability.available,
+    capabilities:["publish-mock"],executionTargets:["host"],
+    details:{livePublishingEnabled:false,transport:"none",actions:capability.actions} };
+});
 const providers: ComputerProvider[] = [
   filesystemProvider,
   shellProvider,
@@ -72,6 +80,7 @@ const providers: ComputerProvider[] = [
   transactionProvider,
   browserProvider,
   desktopProvider,
+  publishMockStatusProvider,
 ];
 
 export async function getProviderStatuses(): Promise<ProviderStatus[]> {

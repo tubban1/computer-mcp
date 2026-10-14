@@ -47,6 +47,7 @@ import {
 import { browserProvider } from "../providers/browserProvider.js";
 import { desktopProvider } from "../providers/desktopProvider.js";
 import { getProviderStatuses } from "../providers/registry.js";
+import { mockPublishEffect, inspectMockPublish } from "../providers/publishMockProvider.js";
 import {
   getActionContract,
   summarizeActionContract,
@@ -81,6 +82,30 @@ type ActionDefinition = {
 const noArgs = z.object({}).passthrough();
 
 const actions = {
+  "publish.mock_effect": {
+    provider: "publish-mock",
+    description: "TEST ONLY: persist local mock receipt, NO network or social effects.",
+    schema: z.object({
+      brandId:z.string().min(1).max(100),accountId:z.string().min(1).max(100),
+      platform:z.enum(["youtube","instagram"]),targetId:z.string().min(1).max(100),
+      effectKey:z.string().regex(/^[a-f0-9]{64}$/),
+      revisionDigest:z.string().regex(/^[a-f0-9]{64}$/),
+      mediaSha256:z.string().regex(/^[a-f0-9]{64}$/),
+      captionSha256:z.string().regex(/^[a-f0-9]{64}$/),
+      visibility:z.enum(["private","public"]),
+      maxIncrementalApiCostUsdCents:z.literal(0),
+      humanContentApproved:z.literal(true),
+      policyMode:z.literal("FREE_LEGAL_ONLY"),
+    }).strict(),
+    destructive:true,
+    run:(args:any)=>mockPublishEffect(args),
+  },
+  "publish.mock_inspect": {
+    provider:"publish-mock",
+    description:"TEST ONLY: inspect local mock receipt; never real social status.",
+    schema:z.object({effectKey:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+    run:({effectKey}:any)=>inspectMockPublish(effectKey),
+  },
   "provider.status": {
     provider: "registry",
     description: "Inspect all provider availability and enablement.",

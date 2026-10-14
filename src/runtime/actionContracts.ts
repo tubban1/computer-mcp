@@ -58,6 +58,16 @@ const STATE_CHANGE: ActionContract = {
 };
 
 export function getActionContract(action: string, args: unknown = {}): ActionContract {
+  if (action === "publish.mock_effect") {
+    const key=text(args,"effectKey");
+    return { riskLevel:"high",idempotent:true,sideEffects:["mock_receipt_local_write"],
+      retryPolicy:"never",requiresVerification:true,parallelSafe:false,
+      resources:[resource(key ? "publish-mock:"+key : "publish-mock","exclusive")] };
+  }
+  if (action === "publish.mock_inspect") {
+    const key=text(args,"effectKey");
+    return {...SAFE_READ,resources:[resource(key ? "publish-mock:"+key : "publish-mock","shared")]};
+  }
   if (action === "provider.status") return { ...SAFE_READ };
 
   if (["fs.list", "fs.tree", "fs.read", "fs.info", "fs.search"].includes(action)) {

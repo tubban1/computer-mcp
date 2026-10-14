@@ -10,7 +10,8 @@ export type ProviderCapability =
   | "region-screenshot"
   | "clipboard"
   | "clipboard-transaction"
-  | "native-helper";
+  | "native-helper"
+  | "publish-mock";
 
 export interface ProviderStatus {
   id: string;
