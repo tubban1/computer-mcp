@@ -15,7 +15,7 @@ type Request={method:"POST"|"PUT"|"GET";url:string;headers:Record<string,string>
 type Response={status:number;headers?:Record<string,string>;json?:unknown};
 export type OfficialPorts={
  request:(request:Request)=>Promise<Response>;
- token:(platform:OfficialIntent["platform"],accountId:string)=>Promise<{accessToken:string;accountId:string;scopes:string[]}>;
+ token:(platform:OfficialIntent["platform"],accountId:string)=>Promise<{accessToken:string;accountId:string;ownerTargetId:string;scopes:string[]}>;
  budget:(brandId:string,yyyyMm:string,cents:0)=>Promise<{approved:boolean;remainingUsdCents:number}>;
 };
 type Stage="BEGIN_REQUESTED"|"SESSION"|"UPLOAD_REQUESTED"|"PROCESSING"|"READY_TO_PUBLISH"|"VERIFIED"|"UNCERTAIN";
@@ -83,6 +83,7 @@ function validate(intent:OfficialIntent){
  if(intent.humanContentApproved!==true||intent.policyMode!=="FREE_LEGAL_ONLY"||
     intent.maxIncrementalApiCostUsdCents!==0)throw Error("PUBLISH_COST_POLICY_DENIED");
  if(intent.title.length>100||intent.caption.length>2200)throw Error("PUBLISH_TEXT_INVALID");
+ if(createHash("sha256").update(intent.caption).digest("hex")!==intent.captionSha256)throw Error("PUBLISH_CAPTION_DIGEST_MISMATCH");
  if(intent.platform==="youtube"&&intent.visibility!=="private")throw Error("PUBLISH_YOUTUBE_PILOT_PRIVATE_ONLY");
  if(intent.platform==="instagram"&&intent.visibility!=="public")throw Error("PUBLISH_IG_REQUIRES_PUBLIC_INTENT");
 }
@@ -105,7 +106,7 @@ export async function officialUploadPilot(intent:OfficialIntent){
  if(!b.approved||b.remainingUsdCents<0||b.remainingUsdCents>100)throw Error("PUBLISH_BUDGET_DENIED");
  const identity=await ports.token(intent.platform,intent.accountId);
  const scope=intent.platform==="youtube"?"https://www.googleapis.com/auth/youtube.upload":"instagram_content_publish";
- if(identity.accountId!==intent.accountId||identity.accessToken.length<6||
+ if(identity.accountId!==intent.accountId||identity.ownerTargetId!==intent.targetId||identity.accessToken.length<6||
    !identity.scopes.includes(scope))
   throw Error("PUBLISH_OAUTH_SCOPE_OR_ACCOUNT_DENIED");
  let j:Journal={kind:"OFFICIAL_PROTOCOL_TEST",digest:fp,platform:intent.platform,stage:"BEGIN_REQUESTED"};
@@ -129,8 +130,8 @@ export async function officialUploadPilot(intent:OfficialIntent){
    if(complete.status===308){await advance("UNCERTAIN",{reason:"YOUTUBE_308_NEEDS_RANGE_RECOVERY"});return {...j,needsAttention:true};}
    const video=remoteId(body(complete).id);
    await advance("PROCESSING",{remoteId:video});
-   const result=body(await http(ports,{method:"GET",url:"https://www.googleapis.com/youtube/v3/videos?part=status&id="+video,headers:bearer},["www.googleapis.com"]));
-   if(!Array.isArray(result.items)||result.items[0]?.status?.privacyStatus!=="private")throw Error("PUBLISH_PRIVACY_NOT_VERIFIED");
+   const result=body(await http(ports,{method:"GET",url:"https://www.googleapis.com/youtube/v3/videos?part=status,snippet&id="+video,headers:bearer},["www.googleapis.com"]));
+   if(!Array.isArray(result.items)||result.items.length!==1||result.items[0]?.id!==video||result.items[0]?.snippet?.channelId!==intent.targetId||result.items[0]?.status?.privacyStatus!=="private")throw Error("PUBLISH_PRIVACY_OR_CHANNEL_NOT_VERIFIED");
    await advance("VERIFIED",{reason:"PRIVATE_VERIFIED"});return {...j,needsAttention:false};
   }
   const v="v24.0";

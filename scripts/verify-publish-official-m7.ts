@@ -23,7 +23,7 @@ process.env.OWL_HUMAN_APPROVAL_PUBLIC_KEY_B64=pair.publicKey.export({format:"der
 const sig=async(id:string)=>sign(null,Buffer.from(humanApprovalMessage(await readApproval(id))),pair.privateKey).toString("base64");
 const intent={platform:"youtube" as const,brandId:"island",accountId:"owner-yt",targetId:"channel-test",
  effectKey:sha("youtube-1"),mediaPath:file,mediaSha256:sha(bytes),revisionDigest:sha("rev"),
- captionSha256:sha("caption"),title:"Private test",caption:"No public post",
+ captionSha256:sha("No public post"),title:"Private test",caption:"No public post",
  visibility:"private" as const,humanContentApproved:true as const,policyMode:"FREE_LEGAL_ONLY" as const,
  maxIncrementalApiCostUsdCents:0 as const};
 const ig={...intent,platform:"instagram" as const,brandId:"flower",accountId:"owner-ig",
@@ -37,7 +37,7 @@ const ports={
    return {status:200,headers:{location:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x"}};}
   if(u.searchParams.get("upload_id")==="x"&&r.method==="PUT")return {status:200,json:{id:"video_1"}};
   if(u.hostname==="www.googleapis.com"&&r.method==="GET")
-   return {status:200,json:{items:[{status:{privacyStatus:"private"}}]}};
+   return {status:200,json:{items:[{id:"video_1",snippet:{channelId:"channel-test"},status:{privacyStatus:"private"}}]}};
   if(u.pathname.endsWith("/media")&&r.method==="POST")
    return {status:200,json:{id:"ig_1",uri:"https://rupload.facebook.com/ig-api-upload/v24.0/ig_1"}};
   if(u.hostname==="rupload.facebook.com")return {status:200,json:{success:true}};
@@ -45,7 +45,7 @@ const ports={
    return {status:200,json:{status_code:"FINISHED"}};
   throw Error("UNEXPECTED_REQUEST:"+r.url);
  },
- token:async(platform:"youtube"|"instagram",accountId:string)=>({accountId,accessToken:"fake-token-123456",
+ token:async(platform:"youtube"|"instagram",accountId:string)=>({accountId,ownerTargetId:platform==="youtube"?"channel-test":"ig-test",accessToken:"fake-token-123456",
   scopes:platform==="youtube"?["https://www.googleapis.com/auth/youtube.upload"]:["instagram_content_publish"]}),
  budget:async()=>({approved:true,remainingUsdCents:100}),
 };
@@ -71,6 +71,7 @@ try{
  assert.equal(count,calls.length);
  await assert.rejects(()=>officialUploadPilot({...intent,visibility:"public",effectKey:sha("public")}),/PRIVATE_ONLY/);
  await assert.rejects(()=>officialUploadPilot({...intent,title:"different"}),/PUBLISH_EFFECT_CONFLICT/);
+ await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("caption-changed"),caption:"different"}),/PUBLISH_CAPTION_DIGEST_MISMATCH/);
  await run(ig);
  assert.equal((await inspectOfficialPilot(ig.effectKey)).record?.stage,"READY_TO_PUBLISH");
  assert.ok(!calls.some(s=>s.includes("media_publish")));
@@ -81,13 +82,24 @@ try{
  await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("budget-denied")}),/PUBLISH_BUDGET_DENIED/);
  assert.equal((await inspectOfficialPilot(sha("budget-denied"))).record,null);
  bindOfficialTestPorts({...ports,token:async()=>({accountId:"different",accessToken:"fake-test-only",
-  scopes:["https://www.googleapis.com/auth/youtube.upload"]})});
+  ownerTargetId:"channel-test",scopes:["https://www.googleapis.com/auth/youtube.upload"]})});
  await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("wrong-account")}),/OAUTH_SCOPE_OR_ACCOUNT_DENIED/);
+ bindOfficialTestPorts({...ports,token:async(platform,accountId)=>({
+  accountId,ownerTargetId:"wrong-channel",accessToken:"fake-test-only",
+  scopes:platform==="youtube"?["https://www.googleapis.com/auth/youtube.upload"]:["instagram_content_publish"],
+ })});
+ await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("wrong-target")}),/OAUTH_SCOPE_OR_ACCOUNT_DENIED/);
+ bindOfficialTestPorts({...ports,request:async r=>{
+  if(r.method==="GET"&&r.url.includes("youtube/v3/videos"))return {status:200,json:{items:[{
+   id:"video_1",snippet:{channelId:"wrong-channel"},status:{privacyStatus:"private"}}]}};
+  return ports.request(r);
+ }});
+ await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("wrong-readback")}),/PUBLISH_PRIVACY_OR_CHANNEL_NOT_VERIFIED/);
  bindOfficialTestPorts({...ports,request:async r=>{
   if(r.method==="GET"&&r.url.includes("youtube/v3/videos"))return {status:200,json:{items:[{status:{privacyStatus:"public"}}]}};
   return ports.request(r);
  }});
- await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("wrong-privacy")}),/PUBLISH_PRIVACY_NOT_VERIFIED/);
+ await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("wrong-privacy")}),/PUBLISH_PRIVACY_OR_CHANNEL_NOT_VERIFIED/);
  assert.equal((await inspectOfficialPilot(sha("wrong-privacy"))).record?.stage,"UNCERTAIN");
  bindOfficialTestPorts(null);
  await assert.rejects(()=>officialUploadPilot({...intent,effectKey:sha("unbound")}),/PORT_UNCONNECTED/);

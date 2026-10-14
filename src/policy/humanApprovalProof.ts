@@ -30,15 +30,22 @@ export function approvalSafeReview(subject:string,value:unknown){
    ["brandId","accountId","platform","targetId","visibility","revisionDigest","mediaSha256","effectKey","captionSha256","humanContentApproved","maxIncrementalApiCostUsdCents","policyMode"]:
   ["cwd","workspace_mode"];
  const fields:Record<string,string|number|boolean>={};
+ let previewTruncated=false;
  for(const k of allow){
   const v=args[k];
-  if(typeof v==="string")fields[k]=v.slice(0,220);
-  else if(typeof v==="number"||typeof v==="boolean")fields[k]=v;
+  if(typeof v==="string"){
+   if(v.length>220 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v)){
+    previewTruncated=true;
+    fields[k]=v.slice(0,220);
+   }else fields[k]=v;
+  }else if(typeof v==="number"&&Number.isFinite(v)||typeof v==="boolean")
+   fields[k]=v;
+  else if(v!==undefined)previewTruncated=true;
  }
  if(subject.startsWith("shell.")&&typeof args.command==="string"){
   fields.commandSha256=createHash("sha256").update(args.command).digest("hex");
   fields.commandLength=args.command.length;
  }
  return {fields,redactedFields:Object.keys(args).filter(k=>!allow.includes(k)),
-  complete:Object.keys(args).every(k=>allow.includes(k))};
+  complete:!previewTruncated&&Object.keys(args).every(k=>allow.includes(k))};
 }
