@@ -22,6 +22,10 @@ export function approvalSafeReview(subject:string,value:unknown){
  const allow=subject==="git.push"?["cwd","remote","branch"]:
   subject==="fs.delete"?["path","cwd","recursive"]:
   subject==="tx.rollback"?["id","transactionId"]:
+  subject==="publish.official_upload_test"?
+   ["platform","brandId","accountId","targetId","effectKey","mediaPath","mediaSha256",
+    "revisionDigest","captionSha256","title","caption","visibility","humanContentApproved",
+    "policyMode","maxIncrementalApiCostUsdCents"]:
   subject==="publish.mock_effect"?
    ["brandId","accountId","platform","targetId","visibility","revisionDigest","mediaSha256","effectKey","captionSha256","humanContentApproved","maxIncrementalApiCostUsdCents","policyMode"]:
   ["cwd","workspace_mode"];

@@ -11,7 +11,8 @@ export type ProviderCapability =
   | "clipboard"
   | "clipboard-transaction"
   | "native-helper"
-  | "publish-mock";
+  | "publish-mock"
+  | "publish-official-test";
 
 export interface ProviderStatus {
   id: string;

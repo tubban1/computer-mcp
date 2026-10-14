@@ -132,7 +132,7 @@ export async function listApprovals(options?: { state?: ApprovalState }) {
 
 function actionRequiresApproval(action: string, contract: Pick<ActionContract, "sideEffects">) {
   // Force Publish action approval independently of compatibility mode.
-  if (action === "publish.mock_effect" || scopedActionRequiresApproval(action)) return true;
+  if (["publish.mock_effect","publish.official_upload_test"].includes(action) || scopedActionRequiresApproval(action)) return true;
   if (approvalMode() !== "enforce") return false;
   const configuredActions = csvEnv("OWL_APPROVAL_ACTIONS") ?? DEFAULT_APPROVAL_ACTIONS;
   const configuredEffects = csvEnv("OWL_APPROVAL_SIDE_EFFECTS") ?? [];

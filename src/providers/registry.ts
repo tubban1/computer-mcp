@@ -4,6 +4,7 @@ import type { ComputerProvider, ProviderStatus } from "./types.js";
 import { browserProvider } from "./browserProvider.js";
 import { desktopProvider } from "./desktopProvider.js";
 import { publishMockCapability } from "./publishMockProvider.js";
+import {officialPilotCapability} from "./publishOfficialProvider.js";
 
 class StaticProvider implements ComputerProvider {
   constructor(
@@ -73,6 +74,12 @@ const publishMockStatusProvider = new StaticProvider("publish-mock", "Publish Mo
     capabilities:["publish-mock"],executionTargets:["host"],
     details:{livePublishingEnabled:false,transport:"none",actions:capability.actions} };
 });
+const officialPilotProvider=new StaticProvider("publish-official-test","Publish Official Protocol (test only)",
+ async()=>{const cap=officialPilotCapability();return {
+ id:"publish-official-test",label:"Publish Official Protocol (test only)",
+ enabled:cap.enabled,available:true,capabilities:["publish-official-test"],
+ executionTargets:["host"],details:{liveTransport:false,productionEnabled:false,oauthConnected:false}
+ };});
 const providers: ComputerProvider[] = [
   filesystemProvider,
   shellProvider,
@@ -81,6 +88,7 @@ const providers: ComputerProvider[] = [
   browserProvider,
   desktopProvider,
   publishMockStatusProvider,
+  officialPilotProvider,
 ];
 
 export async function getProviderStatuses(): Promise<ProviderStatus[]> {

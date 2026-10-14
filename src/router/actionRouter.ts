@@ -48,6 +48,7 @@ import { browserProvider } from "../providers/browserProvider.js";
 import { desktopProvider } from "../providers/desktopProvider.js";
 import { getProviderStatuses } from "../providers/registry.js";
 import { mockPublishEffect, inspectMockPublish } from "../providers/publishMockProvider.js";
+import {officialUploadPilot,inspectOfficialPilot} from "../providers/publishOfficialProvider.js";
 import { withApprovedScopedCapability } from "../security/scopedCapabilities.js";
 import {
   getActionContract,
@@ -83,6 +84,23 @@ type ActionDefinition = {
 const noArgs = z.object({}).passthrough();
 
 const actions = {
+  "publish.official_upload_test":{
+    provider:"publish-official-test",description:"TEST ONLY: official YouTube private upload / Instagram Reel staging via fake HTTP",
+    schema:z.object({
+      platform:z.enum(["youtube","instagram"]),brandId:z.string().min(1).max(100),
+      accountId:z.string().min(1).max(100),targetId:z.string().min(1).max(100),
+      effectKey:z.string().regex(/^[a-f0-9]{64}$/),mediaSha256:z.string().regex(/^[a-f0-9]{64}$/),
+      revisionDigest:z.string().regex(/^[a-f0-9]{64}$/),captionSha256:z.string().regex(/^[a-f0-9]{64}$/),
+      mediaPath:z.string().min(1),title:z.string().max(100),caption:z.string().max(2200),
+      visibility:z.enum(["private","public"]),humanContentApproved:z.literal(true),
+      policyMode:z.literal("FREE_LEGAL_ONLY"),maxIncrementalApiCostUsdCents:z.literal(0),
+    }).strict(),destructive:true,run:(args:any)=>officialUploadPilot(args),
+  },
+  "publish.official_inspect":{
+    provider:"publish-official-test",description:"TEST ONLY: inspect local pilot journal",
+    schema:z.object({effectKey:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+    run:({effectKey}:any)=>inspectOfficialPilot(effectKey),
+  },
   "publish.mock_effect": {
     provider: "publish-mock",
     description: "TEST ONLY: persist local mock receipt, NO network or social effects.",

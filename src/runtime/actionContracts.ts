@@ -58,6 +58,16 @@ const STATE_CHANGE: ActionContract = {
 };
 
 export function getActionContract(action: string, args: unknown = {}): ActionContract {
+  if(action==="publish.official_upload_test"){
+    const key=text(args,"effectKey");
+    return {riskLevel:"high",idempotent:false,sideEffects:["remote_upload_test_port"],
+      retryPolicy:"never",requiresVerification:true,parallelSafe:false,
+      resources:[resource("publish-official:"+(key||"unknown"),"exclusive")]};
+  }
+  if(action==="publish.official_inspect"){
+    const key=text(args,"effectKey");
+    return {...SAFE_READ,resources:[resource("publish-official:"+(key||"unknown"),"shared")]};
+  }
   if (action === "publish.mock_effect") {
     const key=text(args,"effectKey");
     return { riskLevel:"high",idempotent:true,sideEffects:["mock_receipt_local_write"],
