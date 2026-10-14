@@ -32,8 +32,9 @@ const calls:string[]=[];
 const ports={
  request:async(r:{method:string;url:string;headers:Record<string,string>})=>{
   const u=new URL(r.url);calls.push(r.method+" "+u.hostname+u.pathname);
-  if(u.hostname==="www.googleapis.com"&&r.method==="POST")
-   return {status:200,headers:{location:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x"}};
+  if(u.hostname==="www.googleapis.com"&&r.method==="POST"){
+   assert.ok(["video/mp4","video/quicktime"].includes(r.headers["X-Upload-Content-Type"]));
+   return {status:200,headers:{location:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x"}};}
   if(u.searchParams.get("upload_id")==="x"&&r.method==="PUT")return {status:200,json:{id:"video_1"}};
   if(u.hostname==="www.googleapis.com"&&r.method==="GET")
    return {status:200,json:{items:[{status:{privacyStatus:"private"}}]}};
@@ -62,6 +63,10 @@ try{
  };
  await run(intent);
  assert.equal((await inspectOfficialPilot(intent.effectKey)).record?.stage,"VERIFIED");
+ const movFile=path.join(root,"pilot.mov");
+ await fs.copyFile(file,movFile);
+ await run({...intent,mediaPath:movFile,effectKey:sha("youtube-mov")});
+ assert.equal((await inspectOfficialPilot(sha("youtube-mov"))).record?.stage,"VERIFIED");
  const count=calls.length;assert.equal((await officialUploadPilot(intent)).replayed,true);
  assert.equal(count,calls.length);
  await assert.rejects(()=>officialUploadPilot({...intent,visibility:"public",effectKey:sha("public")}),/PRIVATE_ONLY/);

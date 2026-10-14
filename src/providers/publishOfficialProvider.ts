@@ -88,7 +88,8 @@ function validate(intent:OfficialIntent){
 }
 async function media(intent:OfficialIntent){
  const file=await assertAllowedExistingPath(intent.mediaPath),st=await fs.lstat(file);
- if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>64*1024*1024||!/\.mp4$/i.test(file))
+ const allowedFormat=intent.platform==="youtube"?/\.(mov|mp4)$/i.test(file):/\.mp4$/i.test(file);
+ if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>64*1024*1024||!allowedFormat)
   throw Error("PUBLISH_MEDIA_UNSAFE_FOR_M7_PILOT");
  const bytes=await fs.readFile(file);
  if(createHash("sha256").update(bytes).digest("hex")!==intent.mediaSha256)throw Error("PUBLISH_MEDIA_DIGEST_MISMATCH");
@@ -111,18 +112,19 @@ export async function officialUploadPilot(intent:OfficialIntent){
  await write(intent.effectKey,j,true);
  const advance=async(stage:Stage,extra:Partial<Journal>={})=>{j={...j,...extra,stage};await write(intent.effectKey,j);};
  const bearer={Authorization:"Bearer "+identity.accessToken};
+ const mime=intent.mediaPath.toLowerCase().endsWith(".mov")?"video/quicktime":"video/mp4";
  try{
   if(intent.platform==="youtube"){
    const start=await http(ports,{method:"POST",
      url:"https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-     headers:{...bearer,"Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":String(bytes.length),"X-Upload-Content-Type":"video/mp4"},
+     headers:{...bearer,"Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":String(bytes.length),"X-Upload-Content-Type":mime},
      body:JSON.stringify({snippet:{title:intent.title,description:intent.caption},
        status:{privacyStatus:"private",selfDeclaredMadeForKids:false}})},["www.googleapis.com"]);
    if(start.status!==200&&start.status!==201)throw Error("PUBLISH_YT_START_"+start.status);
    const uri=https(Object.entries(start.headers??{}).find(([k])=>k.toLowerCase()==="location")?.[1]??"",["www.googleapis.com"]);
    await advance("SESSION",{session:uri});await advance("UPLOAD_REQUESTED");
    const complete=await http(ports,{method:"PUT",url:uri,headers:{...bearer,
-     "Content-Type":"video/mp4","Content-Length":String(bytes.length),
+     "Content-Type":mime,"Content-Length":String(bytes.length),
      "Content-Range":"bytes 0-"+(bytes.length-1)+"/"+bytes.length},body:bytes},["www.googleapis.com"]);
    if(complete.status===308){await advance("UNCERTAIN",{reason:"YOUTUBE_308_NEEDS_RANGE_RECOVERY"});return {...j,needsAttention:true};}
    const video=remoteId(body(complete).id);
