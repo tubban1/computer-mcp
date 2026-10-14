@@ -7,7 +7,7 @@ export function envFlag(name: string, defaultValue = false): boolean {
 export function requireCapability(name: string, defaultValue = false): void {
   if (!envFlag(name, defaultValue)) {
     throw new Error(
-      `${name} is disabled. Set ${name}=true in .env and restart computer-mcp to enable it.`,
+      `${name} is disabled by OWL Runtime policy. Set ${name}=true in the active OWL Runtime environment configuration and restart that OWL Runtime process to apply it.`,
     );
   }
 }

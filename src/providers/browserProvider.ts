@@ -233,7 +233,7 @@ function runningUnderRosetta(): boolean {
 
 function requireBrowserEnabled(): void {
   if (!envFlag("ALLOW_BROWSER", false)) {
-    throw new Error("Browser provider is disabled. Set ALLOW_BROWSER=true and restart computer-mcp.");
+    throw new Error("Browser provider is disabled by OWL Runtime policy. Set ALLOW_BROWSER=true in the active OWL Runtime environment and restart OWL Runtime.");
   }
 }
 
