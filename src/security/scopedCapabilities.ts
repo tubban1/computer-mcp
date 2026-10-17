@@ -13,7 +13,8 @@ const storage=new AsyncLocalStorage<{
  flag:string;session:string;task?:string;step?:string;expires:number;
 }>();
 export const scopedActionRequiresApproval=(action:string)=>
- process.env.OWL_SCOPED_CAPABILITIES==="1" && action in flags;
+ process.env.OWL_SCOPED_CAPABILITIES==="1" && action in flags &&
+ (process.env.OWL_SCOPED_ACTION_ALLOWLIST??"").split(",").map(x=>x.trim()).includes(action);
 export function scopedCapabilityAllows(flag:string){
  const grant=storage.getStore(),ctx=currentExecutionContext();
  return Boolean(grant && process.env.OWL_SCOPED_CAPABILITIES==="1" &&

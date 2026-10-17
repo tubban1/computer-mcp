@@ -43,6 +43,7 @@ const { killProcess, listProcesses, startProcess } = await import(
 const { shellConcurrencyStatus } = await import(
   "../src/runtime/shellConcurrencyGate.js"
 );
+const {writeManagedProcess} = await import("../src/runtime/processStore.js");
 
 const sessions = ["A", "B", "C", "D"].map((suffix) => ({
   sessionId: `shell-cap-${suffix}`,
@@ -54,6 +55,26 @@ for (const session of sessions) {
 }
 
 try {
+  // A recovered record must stop counting when the store marks its process
+  // terminal, even if the original PID remains alive (simulates PID reuse).
+  const recoveredId="verify_recovered_snapshot_ttl";
+  const recoveredRecord={
+    version:1 as const,processId:recoveredId,pid:process.pid,
+    command:"sleep 5",cwd:repoA,workspace:repoA,workspaceMode:"read" as const,
+    ownerSessionId:"verify-recovery-owner",startedAt:new Date().toISOString(),
+    updatedAt:new Date().toISOString(),status:"running" as const,
+    runtimeInstanceId:"isolated-test",stdoutPath:path.join(scratch,"fake.stdout"),
+    stderrPath:path.join(scratch,"fake.stderr"),inputAvailable:false
+  };
+  await writeManagedProcess(recoveredRecord);
+  assert.ok((await shellConcurrencyStatus()).active.some(row=>
+    row.id==="managed:"+recoveredId),"running recovered record not accounted");
+  await writeManagedProcess({...recoveredRecord,status:"exited" as const,exitCode:0});
+  await new Promise(resolve=>setTimeout(resolve,5_200));
+  assert.ok(!(await shellConcurrencyStatus()).active.some(row=>
+    row.id==="managed:"+recoveredId),
+    "terminal recovered record remained stuck in admission snapshot");
+
   const first = await withExecutionContext(sessions[0]!, async () =>
     await startProcess("sleep 0.8", repoA, "read"),
   );
@@ -160,6 +181,7 @@ try {
         sameWorkspaceThirdWaitMs: thirdWaitMs,
         siblingWorkspaceWaitMs: siblingWaitMs,
         capacityBusyWallMs: failFastWallMs,
+        recoveredProcessRefresh: "PASS",
         backpressure: "PASS",
         managedStartFailFast: "PASS",
         crossWorkspaceConcurrency: "PASS",

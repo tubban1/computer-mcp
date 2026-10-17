@@ -99,7 +99,11 @@ export function managedProcessAdmissionWaitMs(): number {
 const active = new Map<string, ActivePermit>();
 const pending = new Map<string, PendingPermit>();
 
+// Process records change when managed jobs exit. Revalidate admission state:
+// a permanent snapshot can count exited jobs against capacity indefinitely.
+const recoveredSnapshotTtlMs = 5_000;
 let recoveredSnapshot: ManagedProcessRecord[] | null = null;
+let recoveredSnapshotAt = 0;
 let recoveredSnapshotPromise: Promise<ManagedProcessRecord[]> | null = null;
 
 export function releaseShellConcurrencyPermit(id: string): void {
@@ -107,7 +111,8 @@ export function releaseShellConcurrencyPermit(id: string): void {
 }
 
 async function loadRecoveredSnapshot(): Promise<ManagedProcessRecord[]> {
-  if (recoveredSnapshot) return recoveredSnapshot;
+  if (recoveredSnapshot && Date.now()-recoveredSnapshotAt < recoveredSnapshotTtlMs)
+    return recoveredSnapshot;
   if (recoveredSnapshotPromise) return await recoveredSnapshotPromise;
 
   recoveredSnapshotPromise = listManagedProcesses()
@@ -119,6 +124,7 @@ async function loadRecoveredSnapshot(): Promise<ManagedProcessRecord[]> {
     )
     .then((records) => {
       recoveredSnapshot = records;
+      recoveredSnapshotAt = Date.now();
       return records;
     })
     .finally(() => {
@@ -263,8 +269,20 @@ export async function acquireShellConcurrencyPermit(input: {
           admissionMode?: string;
         };
         typed.code = "SHELL_CAPACITY_BUSY";
-        typed.retryAfterMs = pollMs;
+        typed.retryAfterMs = Math.min(5_000,Math.max(pollMs,
+          Math.round(waitLimitMs/4)));
         typed.admissionMode = budget.mode;
+        Object.assign(typed,{
+          capacitySnapshot:{
+            waitMs:elapsed,
+            mode:budget.mode,
+            global:{slots:globalSlots,limit:budget.globalSlots,
+              credits:globalCredits,creditLimit:budget.globalComputeCredits},
+            workspace:{slots:workspaceSlots,limit:budget.perWorkspaceSlots,
+              credits:workspaceCredits,creditLimit:budget.perWorkspaceComputeCredits},
+            demand:{class:demand.class,credits:demand.computeCredits}
+          }
+        });
         throw error;
       }
 
