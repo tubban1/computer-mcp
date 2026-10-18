@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -83,9 +84,12 @@ function initialState(): RuntimeAccessState {
   };
 }
 
-async function readPersistedState(): Promise<RuntimeAccessState | null> {
+function readPersistedState(): RuntimeAccessState | null {
   try {
-    const raw = JSON.parse(await fs.readFile(ACCESS_FILE, "utf8"));
+    // This tiny, local lease is the gate for *every* consequential RPC.
+    // Avoid starving critical authorization reads behind a busy libuv I/O pool.
+    // Writers use atomic rename, so a synchronous read observes a full state.
+    const raw = JSON.parse(readFileSync(ACCESS_FILE, "utf8"));
     if (
       raw?.schemaVersion !== 1 ||
       !["LOCKED", "READY", "REVOKED"].includes(raw?.state)
@@ -136,7 +140,7 @@ function effectiveState(state: RuntimeAccessState): RuntimeAccessState {
 }
 
 export async function getRuntimeAccessState(): Promise<RuntimeAccessState> {
-  return effectiveState((await readPersistedState()) ?? initialState());
+  return effectiveState(readPersistedState() ?? initialState());
 }
 
 function cleanRequired(value: unknown, name: string): string {
