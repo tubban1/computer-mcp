@@ -3,9 +3,10 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('status','frontmost_app','window_bounds','ui_tree')]
+  [ValidateSet('status','frontmost_app','window_bounds','ui_tree','screenshot')]
   [string]$Action,
   [string]$AppName = '',
+  [string]$OutputPath = '',
   [ValidateRange(1,300)]
   [int]$MaxElements = 100
 )
@@ -79,6 +80,29 @@ switch($Action){
     $elem=FindWindow
     $b=Bounds $elem
     @{app=(AppFor $elem);x=$b.x;y=$b.y;width=$b.width;height=$b.height} |
+      ConvertTo-Json -Compress -Depth 4
+  }
+  'screenshot' {
+    if(-not $OutputPath -or [IO.Path]::GetExtension($OutputPath).ToLowerInvariant() -ne '.png') {
+      throw 'WINDOWS_UIA_SCREENSHOT_PNG_PATH_REQUIRED'
+    }
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName System.Windows.Forms
+    $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+    if($bounds.Width -lt 1 -or $bounds.Height -lt 1 -or
+       [long]$bounds.Width * [long]$bounds.Height -gt 75000000){
+      throw 'WINDOWS_UIA_SCREENSHOT_DIMENSIONS_INVALID'
+    }
+    $bitmap=New-Object System.Drawing.Bitmap($bounds.Width,$bounds.Height)
+    $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+      $graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bounds.Size)
+      $bitmap.Save($OutputPath,[System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $graphics.Dispose()
+      $bitmap.Dispose()
+    }
+    @{path=$OutputPath;width=$bounds.Width;height=$bounds.Height;backend='windows-gdi-readonly'} |
       ConvertTo-Json -Compress -Depth 4
   }
   'ui_tree' {

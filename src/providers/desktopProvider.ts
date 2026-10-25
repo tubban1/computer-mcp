@@ -1188,9 +1188,10 @@ const windowsUiReadOnlyScript = path.resolve(
   "../../scripts/windows/desktop-readonly.ps1",
 );
 async function windowsUiReadOnly(
-  op: "status" | "frontmost_app" | "window_bounds" | "ui_tree",
+  op: "status" | "frontmost_app" | "window_bounds" | "ui_tree" | "screenshot",
   appName?: string,
   maxElements?: number,
+  outputPath?: string,
 ): Promise<any> {
   if (process.platform !== "win32")
     throw new Error("WINDOWS_UIA_PLATFORM_REQUIRED");
@@ -1204,6 +1205,7 @@ async function windowsUiReadOnly(
       "-File", windowsUiReadOnlyScript, "-Action", op,
       ...(appName ? ["-AppName", appName] : []),
       ...(maxElements ? ["-MaxElements", String(Math.min(300,Math.max(1,maxElements)))] : []),
+      ...(outputPath ? ["-OutputPath",outputPath] : []),
     ];
     const child = spawn("powershell.exe", args, {
       shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
@@ -1250,11 +1252,22 @@ class WindowsDesktopProvider extends DesktopProvider {
         helperMode:"powershell-uia-readonly",
         helperInstalled:available,
         nativeInput:false,
-        screenshot:false,
+        screenshot:"virtual-screen-readonly",
         clipboard:false,
-        note:"Windows Dev UIAutomation is read-only. Click, keyboard, screenshots and clipboard require a separately approved Windows Helper.",
+        note:"Windows Dev UI Automation and whole-screen PNG capture are read-only. Click, keyboard and clipboard still require a separately approved Windows Helper.",
       },
     };
+  }
+  override async screenshot(outputPath: string) {
+    if (!envFlag("ALLOW_GUI",false)) {
+      throw new Error("ALLOW_GUI is disabled by OWL Runtime policy.");
+    }
+    if (path.extname(outputPath).toLowerCase() !== ".png") {
+      throw new Error("WINDOWS_UIA_SCREENSHOT_PNG_REQUIRED");
+    }
+    const safePath = await assertAllowedTargetPath(outputPath);
+    await fs.mkdir(path.dirname(safePath), { recursive: true });
+    return windowsUiReadOnly("screenshot", undefined, undefined, safePath);
   }
   override async helperStatus() { return windowsUiReadOnly("status"); }
   override async frontmostApp() { return windowsUiReadOnly("frontmost_app"); }
