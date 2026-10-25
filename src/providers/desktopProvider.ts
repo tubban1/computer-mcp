@@ -6,6 +6,7 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import { fileURLToPath } from "node:url";
 import { envFlag } from "../security/capabilities.js";
 import { assertAllowedTargetPath } from "../security/pathGuard.js";
 import type { ComputerProvider, ProviderStatus } from "./types.js";
@@ -1177,4 +1178,92 @@ class DesktopProvider implements ComputerProvider {
   }
 }
 
-export const desktopProvider = new DesktopProvider();
+
+// Windows reuses the same action router, provider contract and UI element shape
+// as macOS. Only the platform-specific OS introspection is substituted here.
+// Mutating desktop methods remain inherited and fail closed on non-macOS until
+// the separate Windows signed native Helper is available.
+const windowsUiReadOnlyScript = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../scripts/windows/desktop-readonly.ps1",
+);
+async function windowsUiReadOnly(
+  op: "status" | "frontmost_app" | "window_bounds" | "ui_tree",
+  appName?: string,
+  maxElements?: number,
+): Promise<any> {
+  if (process.platform !== "win32")
+    throw new Error("WINDOWS_UIA_PLATFORM_REQUIRED");
+  if (!envFlag("ALLOW_GUI", false))
+    throw new Error("ALLOW_GUI is disabled by OWL Runtime policy.");
+  if (!fsSync.existsSync(windowsUiReadOnlyScript))
+    throw new Error("WINDOWS_UIA_READONLY_HELPER_NOT_INSTALLED");
+  return await new Promise((resolve, reject) => {
+    const args = [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+      "-File", windowsUiReadOnlyScript, "-Action", op,
+      ...(appName ? ["-AppName", appName] : []),
+      ...(maxElements ? ["-MaxElements", String(Math.min(300,Math.max(1,maxElements)))] : []),
+    ];
+    const child = spawn("powershell.exe", args, {
+      shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    });
+    const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
+    let total = 0;
+    const timeout = setTimeout(() => child.kill(), 10_000);
+    child.stdout?.on("data", (value: Buffer) => {
+      total += value.length;
+      if (total > 512_000) child.kill();
+      else chunks.push(value);
+    });
+    child.stderr?.on("data", (value: Buffer) => {
+      if (errors.reduce((n,chunk)=>n+chunk.length,0)<8_000)errors.push(value);
+    });
+    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      if(code!==0 || total>512_000) {
+        reject(new Error("WINDOWS_UIA_READONLY_FAILED: " +
+          (Buffer.concat(errors).toString("utf8").slice(0,200) || String(code))));
+        return;
+      }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        reject(new Error("WINDOWS_UIA_INVALID_JSON"));
+      }
+    });
+  });
+}
+class WindowsDesktopProvider extends DesktopProvider {
+  override async status(): Promise<ProviderStatus> {
+    const available = fsSync.existsSync(windowsUiReadOnlyScript);
+    return {
+      id: "desktop", label: "Desktop",
+      enabled: available && envFlag("ALLOW_GUI", false),
+      available,
+      capabilities: ["desktop","accessibility","ui-tree"],
+      executionTargets: ["host"],
+      details: {
+        platform:"win32",
+        helperMode:"powershell-uia-readonly",
+        helperInstalled:available,
+        nativeInput:false,
+        screenshot:false,
+        clipboard:false,
+        note:"Windows Dev UIAutomation is read-only. Click, keyboard, screenshots and clipboard require a separately approved Windows Helper.",
+      },
+    };
+  }
+  override async helperStatus() { return windowsUiReadOnly("status"); }
+  override async frontmostApp() { return windowsUiReadOnly("frontmost_app"); }
+  override async windowBounds(appName?: string) {
+    return windowsUiReadOnly("window_bounds",appName);
+  }
+  override async uiTree(appName?: string,maxElements=300) {
+    return windowsUiReadOnly("ui_tree",appName,maxElements);
+  }
+}
+export const desktopProvider = process.platform === "win32"
+  ? new WindowsDesktopProvider() : new DesktopProvider();
